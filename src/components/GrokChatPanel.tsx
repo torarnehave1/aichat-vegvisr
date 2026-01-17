@@ -255,7 +255,6 @@ const GrokChatPanel = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [imageLoadStates, setImageLoadStates] = useState<Record<string, boolean>>({});
-  const streamTimer = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);

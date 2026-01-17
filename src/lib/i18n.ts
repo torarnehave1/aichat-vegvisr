@@ -1,7 +1,9 @@
 export type Language = 'en' | 'is' | 'no' | 'nl';
 
 type TranslationValue = string | string[] | TranslationTree;
-type TranslationTree = Record<string, TranslationValue>;
+interface TranslationTree {
+  [key: string]: TranslationValue;
+}
 
 const DEFAULT_LANGUAGE: Language = 'en';
 

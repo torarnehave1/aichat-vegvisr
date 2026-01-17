@@ -139,8 +139,8 @@ const MarkdownMessage = ({
           {children}
         </a>
       ),
-      code: ({ inline, children }) =>
-        inline ? (
+      code: ({ className, children }) =>
+        !className ? (
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-900">
             {children}
           </code>
@@ -1725,35 +1725,6 @@ const GrokChatPanel = () => {
     return `I received: "${prompt}"\n${contextLine}\n${attachmentLine}\nI will respond as ${providerLabel(
       provider
     )} once the API is connected.`;
-  };
-
-  const startStreaming = (content: string, messageId: string) => {
-    if (streamTimer.current) {
-      window.clearInterval(streamTimer.current);
-    }
-    setIsStreaming(true);
-    setStreamingContent('');
-
-    let index = 0;
-    streamTimer.current = window.setInterval(() => {
-      index += 2;
-      const nextChunk = content.slice(0, index);
-      setStreamingContent(nextChunk);
-
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId ? { ...msg, content: nextChunk } : msg
-        )
-      );
-
-      if (index >= content.length) {
-        if (streamTimer.current) {
-          window.clearInterval(streamTimer.current);
-        }
-        streamTimer.current = null;
-        setIsStreaming(false);
-      }
-    }, 40);
   };
 
   const activeModelOptions = useMemo(() => {

@@ -3,6 +3,7 @@ import { LanguageSelector } from 'vegvisr-ui-kit';
 import GrokChatPanel from './components/GrokChatPanel';
 import { LanguageContext } from './lib/LanguageContext';
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
+import { useTranslation } from './lib/useTranslation';
 
 function App() {
   const [language, setLanguageState] = useState(getStoredLanguage());
@@ -16,6 +17,7 @@ function App() {
     () => ({ language, setLanguage }),
     [language]
   );
+  const t = useTranslation(language);
 
   return (
     <LanguageContext.Provider value={contextValue}>
@@ -24,7 +26,7 @@ function App() {
         <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col px-6 py-12">
           <header className="flex items-center justify-between">
             <div className="text-sm font-semibold uppercase tracking-[0.4em] text-white/60">
-              Vegvisr AI Chat
+              {t('app.title')}
             </div>
             <div className="flex items-center gap-3">
               <LanguageSelector value={language} onChange={setLanguage} />
@@ -32,7 +34,7 @@ function App() {
                 type="button"
                 className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70 hover:bg-white/20"
               >
-                Early Access
+                {t('app.badge')}
               </button>
             </div>
           </header>

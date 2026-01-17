@@ -443,10 +443,14 @@ const GrokChatPanel = () => {
     return data.session || null;
   };
 
-  const loadChatHistory = async (keySnapshot: string | null) => {
-    if (!chatSessionId) return false;
+  const loadChatHistory = async (
+    keySnapshot: string | null,
+    sessionIdOverride: string | null = null
+  ) => {
+    const activeSessionId = sessionIdOverride || chatSessionIdRef.current || chatSessionId;
+    if (!activeSessionId) return false;
     const params = new URLSearchParams({
-      sessionId: chatSessionId,
+      sessionId: activeSessionId,
       decrypt: '1',
       limit: '200'
     });
@@ -531,7 +535,7 @@ const GrokChatPanel = () => {
         if (cachedSessionId) {
           chatSessionIdRef.current = cachedSessionId;
           setChatSessionId(cachedSessionId);
-          await loadChatHistory(keySnapshot);
+          await loadChatHistory(keySnapshot, cachedSessionId);
         }
       } catch (error) {
         setHistoryError(error instanceof Error ? error.message : 'Failed to load chat history');
@@ -662,7 +666,7 @@ const GrokChatPanel = () => {
     persistSessionIdLocally(sessionId);
     setMessages([]);
     try {
-      await loadChatHistory(sessionStorageKey);
+      await loadChatHistory(sessionStorageKey, sessionId);
       setSessionListOpen(false);
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : 'Failed to load chat history');

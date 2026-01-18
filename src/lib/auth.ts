@@ -4,7 +4,7 @@ export type AuthUser = {
   role?: string | null;
 };
 
-const AUTH_SESSION_URL = 'https://auth.vegvisr.org/auth/openauth/session';
+const AUTH_SESSION_URL = '/auth/openauth/session';
 
 export const readStoredUser = (): AuthUser | null => {
   if (typeof window === 'undefined') return null;

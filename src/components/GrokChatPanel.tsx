@@ -228,13 +228,19 @@ const SUPPORTED_AUDIO_MIME_TYPES = new Set([
 
 const SUPPORTED_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.mp4', '.webm'];
 
-const GrokChatPanel = () => {
+type GrokChatPanelProps = {
+  initialUserId?: string;
+  initialEmail?: string;
+};
+
+const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const { language } = useLanguage();
   const t = useTranslation(language);
   const [provider, setProvider] = useState('grok');
   const [openaiModel, setOpenaiModel] = useState('gpt-5.2');
   const [claudeModel, setClaudeModel] = useState('claude-opus-4-5-20251101');
-  const [userId, setUserId] = useState(DEFAULT_USER_ID);
+  const [userId, setUserId] = useState(initialUserId || DEFAULT_USER_ID);
+  const [userEmail, setUserEmail] = useState(initialEmail || '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -291,6 +297,18 @@ const GrokChatPanel = () => {
       setUploadedImage(null);
     }
   }, [providerSupportsImages]);
+
+  useEffect(() => {
+    if (initialUserId && initialUserId !== userId) {
+      setUserId(initialUserId);
+    }
+  }, [initialUserId, userId]);
+
+  useEffect(() => {
+    if (initialEmail && initialEmail !== userEmail) {
+      setUserEmail(initialEmail);
+    }
+  }, [initialEmail, userEmail]);
 
   const showToast = (message: string) => {
     if (toastTimerRef.current) {

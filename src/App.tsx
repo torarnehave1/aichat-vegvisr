@@ -207,12 +207,14 @@ function App() {
                   Sign in
                 </button>
               ) : (
-                <button
-                  type="button"
-                  className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70 hover:bg-white/20"
-                >
-                  {t('app.badge')}
-                </button>
+                <div className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70">
+                  <span>{t('app.badge')}</span>
+                  {authUser?.email && (
+                    <span className="normal-case text-[11px] font-medium tracking-normal text-white/60">
+                      {authUser.email}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </header>

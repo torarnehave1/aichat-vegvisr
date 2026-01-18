@@ -6,6 +6,9 @@ import { fetchAuthSession, loginUrl, readStoredUser, type AuthUser } from './lib
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
 import { useTranslation } from './lib/useTranslation';
 
+const MAGIC_BASE = 'https://email-worker.torarnehave.workers.dev';
+const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
+
 function App() {
   const [language, setLanguageState] = useState(getStoredLanguage());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -22,16 +25,109 @@ function App() {
   );
   const t = useTranslation(language);
 
+  const setAuthCookie = (token: string) => {
+    if (!token) return;
+    const isVegvisr = window.location.hostname.endsWith('vegvisr.org');
+    const domain = isVegvisr ? '; Domain=.vegvisr.org' : '';
+    const maxAge = 60 * 60 * 24 * 30;
+    document.cookie = `vegvisr_token=${encodeURIComponent(
+      token
+    )}; Path=/; Max-Age=${maxAge}; SameSite=Lax; Secure${domain}`;
+  };
+
+  const persistUser = (user: {
+    email: string;
+    role: string;
+    user_id: string | null;
+    emailVerificationToken: string | null;
+    oauth_id?: string | null;
+    phone?: string | null;
+    phoneVerifiedAt?: string | null;
+    branding?: { mySite: string | null; myLogo: string | null };
+    profileimage?: string | null;
+  }) => {
+    const payload = {
+      email: user.email,
+      role: user.role,
+      user_id: user.user_id,
+      oauth_id: user.oauth_id || user.user_id || null,
+      emailVerificationToken: user.emailVerificationToken,
+      phone: user.phone || null,
+      phoneVerifiedAt: user.phoneVerifiedAt || null,
+      branding: user.branding || { mySite: null, myLogo: null },
+      profileimage: user.profileimage || null
+    };
+    localStorage.setItem('user', JSON.stringify(payload));
+    if (user.emailVerificationToken) {
+      setAuthCookie(user.emailVerificationToken);
+    }
+    sessionStorage.setItem('email_session_verified', '1');
+    setAuthUser({
+      userId: payload.user_id || payload.oauth_id || '',
+      email: payload.email,
+      role: payload.role || null
+    });
+  };
+
+  const fetchUserContext = async (targetEmail: string) => {
+    const roleRes = await fetch(
+      `${DASHBOARD_BASE}/get-role?email=${encodeURIComponent(targetEmail)}`
+    );
+    if (!roleRes.ok) {
+      throw new Error(`User role unavailable (status: ${roleRes.status})`);
+    }
+    const roleData = await roleRes.json();
+    if (!roleData?.role) {
+      throw new Error('Unable to retrieve user role.');
+    }
+
+    const userDataRes = await fetch(
+      `${DASHBOARD_BASE}/userdata?email=${encodeURIComponent(targetEmail)}`
+    );
+    if (!userDataRes.ok) {
+      throw new Error(`Unable to fetch user data (status: ${userDataRes.status})`);
+    }
+    const userData = await userDataRes.json();
+    return {
+      email: targetEmail,
+      role: roleData.role,
+      user_id: userData.user_id,
+      emailVerificationToken: userData.emailVerificationToken,
+      oauth_id: userData.oauth_id,
+      phone: userData.phone,
+      phoneVerifiedAt: userData.phoneVerifiedAt,
+      branding: userData.branding,
+      profileimage: userData.profileimage
+    };
+  };
+
+  const verifyMagicToken = async (token: string) => {
+    const res = await fetch(
+      `${MAGIC_BASE}/login/magic/verify?token=${encodeURIComponent(token)}`,
+      { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+    );
+    const data = await res.json();
+    if (!res.ok || !data.success || !data.email) {
+      throw new Error(data.error || 'Invalid or expired magic link.');
+    }
+    const userContext = await fetchUserContext(data.email);
+    persistUser(userContext);
+  };
+
   useEffect(() => {
     const url = new URL(window.location.href);
     const magic = url.searchParams.get('magic');
     if (!magic) return;
-    url.searchParams.delete('magic');
-    const redirectTarget = url.toString();
-    const loginWithMagic = `https://login.vegvisr.org?magic=${encodeURIComponent(
-      magic
-    )}&redirect=${encodeURIComponent(redirectTarget)}`;
-    window.location.replace(loginWithMagic);
+    setAuthStatus('checking');
+    verifyMagicToken(magic)
+      .then(() => {
+        url.searchParams.delete('magic');
+        window.history.replaceState({}, '', url.toString());
+        setAuthStatus('authed');
+      })
+      .catch(() => {
+        setAuthStatus('anonymous');
+      });
   }, []);
 
   useEffect(() => {

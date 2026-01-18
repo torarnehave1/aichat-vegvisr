@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { LanguageSelector } from 'vegvisr-ui-kit';
 import GrokChatPanel from './components/GrokChatPanel';
 import { LanguageContext } from './lib/LanguageContext';
-import { fetchAuthSession, loginUrl, readStoredUser, type AuthUser } from './lib/auth';
+import { loginUrl, readStoredUser, type AuthUser } from './lib/auth';
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
 import { useTranslation } from './lib/useTranslation';
 
@@ -110,8 +110,17 @@ function App() {
     if (!res.ok || !data.success || !data.email) {
       throw new Error(data.error || 'Invalid or expired magic link.');
     }
-    const userContext = await fetchUserContext(data.email);
-    persistUser(userContext);
+    try {
+      const userContext = await fetchUserContext(data.email);
+      persistUser(userContext);
+    } catch {
+      persistUser({
+        email: data.email,
+        role: 'user',
+        user_id: data.email,
+        emailVerificationToken: null
+      });
+    }
   };
 
   useEffect(() => {
@@ -136,19 +145,11 @@ function App() {
       const stored = readStoredUser();
       if (stored && isMounted) {
         setAuthUser(stored);
-      }
-      try {
-        const session = await fetchAuthSession();
-        if (session && isMounted) {
-          setAuthUser(session);
-          setAuthStatus('authed');
-          return;
-        }
-      } catch {
-        // ignore and fall back to stored user if present
+        setAuthStatus('authed');
+        return;
       }
       if (isMounted) {
-        setAuthStatus(stored ? 'authed' : 'anonymous');
+        setAuthStatus('anonymous');
       }
     };
     bootstrap();

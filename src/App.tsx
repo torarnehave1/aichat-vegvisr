@@ -23,6 +23,18 @@ function App() {
   const t = useTranslation(language);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const magic = url.searchParams.get('magic');
+    if (!magic) return;
+    url.searchParams.delete('magic');
+    const redirectTarget = url.toString();
+    const loginWithMagic = `https://login.vegvisr.org?magic=${encodeURIComponent(
+      magic
+    )}&redirect=${encodeURIComponent(redirectTarget)}`;
+    window.location.replace(loginWithMagic);
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
     const bootstrap = async () => {
       const stored = readStoredUser();

@@ -152,6 +152,27 @@ function App() {
     }
   };
 
+  const clearAuthCookie = () => {
+    const base = 'vegvisr_token=; Path=/; Max-Age=0; SameSite=Lax; Secure';
+    const hostname = window.location.hostname;
+    document.cookie = base;
+    if (hostname.endsWith('vegvisr.org')) {
+      document.cookie = `${base}; Domain=.vegvisr.org`;
+    }
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('email_session_verified');
+    } catch {
+      // ignore storage errors
+    }
+    clearAuthCookie();
+    setAuthUser(null);
+    setAuthStatus('anonymous');
+  };
+
   useEffect(() => {
     const url = new URL(window.location.href);
     const magic = url.searchParams.get('magic');
@@ -203,6 +224,8 @@ function App() {
                 badgeLabel={t('app.badge')}
                 signInLabel="Sign in"
                 onSignIn={() => setLoginOpen((prev) => !prev)}
+                logoutLabel="Log out"
+                onLogout={handleLogout}
               />
             </div>
           </header>

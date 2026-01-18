@@ -16,7 +16,7 @@
     "react-markdown": "^9.1.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.0",
-    "vegvisr-ui-kit": "^1.0.2"
+    "vegvisr-ui-kit": "^1.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

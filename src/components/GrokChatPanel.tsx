@@ -205,7 +205,6 @@ const CHAT_ENDPOINTS: Record<string, string> = {
 const CHAT_HISTORY_BASE_URL = 'https://api.vegvisr.org/chat-history';
 const AUDIO_ENDPOINT = 'https://openai.vegvisr.org/audio';
 const RESUME_SESSION_ON_LOAD = false;
-const DEFAULT_USER_ID = 'ca3d9d93-3b02-4e49-a4ee-43552ec4ca2b';
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
 
@@ -239,7 +238,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [provider, setProvider] = useState('grok');
   const [openaiModel, setOpenaiModel] = useState('gpt-5.2');
   const [claudeModel, setClaudeModel] = useState('claude-opus-4-5-20251101');
-  const [userId, setUserId] = useState(initialUserId || DEFAULT_USER_ID);
+  const [userId, setUserId] = useState(initialUserId || '');
   const [userEmail, setUserEmail] = useState(initialEmail || '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -321,6 +320,15 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }, 3000);
   };
 
+  const getRequiredUserId = () => {
+    const trimmed = userId.trim();
+    if (!trimmed) {
+      showToast('Sign in to continue.');
+      return null;
+    }
+    return trimmed;
+  };
+
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
       const container = messagesContainerRef.current;
@@ -335,8 +343,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       throw new Error('Chat history unavailable for anonymous users');
     }
     const headers = new Headers(options.headers || {});
-    const trimmedUser = userId.trim() || DEFAULT_USER_ID;
-    const emailHeader = trimmedUser.includes('@') ? trimmedUser : 'anonymous@vegvisr.org';
+    const trimmedUser = userId.trim();
+    if (!trimmedUser) {
+      throw new Error('User id is required');
+    }
+    const emailHeader = userEmail.trim() || 'unknown@vegvisr.org';
     headers.set('x-user-id', trimmedUser);
     headers.set('x-user-email', emailHeader);
     headers.set('x-user-role', 'Superadmin');
@@ -1091,7 +1102,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     const formData = new FormData();
     formData.append('file', blob, fileName);
     formData.append('model', 'whisper-1');
-    formData.append('userId', userId.trim() || DEFAULT_USER_ID);
+    const requiredUserId = getRequiredUserId();
+    if (!requiredUserId) {
+      throw new Error('Sign in required');
+    }
+    formData.append('userId', requiredUserId);
     if (!audioAutoDetect && audioLanguage) {
       formData.append('language', audioLanguage);
     }
@@ -1335,6 +1350,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
   const startAudioTranscription = async () => {
     if (!selectedAudioFile || audioProcessing) return;
+    if (!getRequiredUserId()) return;
 
     setAudioProcessing(true);
     setAudioTranscriptionStatus(t('chat.audioPreparing'));
@@ -1401,6 +1417,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const sendMessage = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
+    if (!getRequiredUserId()) return;
 
     if (isOpenAIImageModel) {
       if (uploadedImage) {
@@ -1518,11 +1535,15 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       const modelSizes = validImageSizes[selectedModel] || [aspectSizes['1:1']];
       const size = modelSizes.includes(requestedSize) ? requestedSize : modelSizes[0];
 
+      const requiredUserId = getRequiredUserId();
+      if (!requiredUserId) {
+        throw new Error('Sign in required');
+      }
       const response = await fetch('https://openai.vegvisr.org/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: userId.trim() || DEFAULT_USER_ID,
+          userId: requiredUserId,
           model: selectedModel,
           prompt: cleaned,
           size,
@@ -1666,8 +1687,12 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       return 'Image upload failed: Claude requires base64 image data. Please paste or upload the image again.';
     }
 
+    const requiredUserId = getRequiredUserId();
+    if (!requiredUserId) {
+      return 'Sign in required to continue.';
+    }
     const payload = {
-      userId: userId.trim() || DEFAULT_USER_ID,
+      userId: requiredUserId,
       model: provider === 'openai' ? openaiModel : provider === 'claude' ? claudeModel : undefined,
       messages: [
         { role: 'system', content: 'You are a helpful assistant. Respond in English unless the user explicitly asks for another language.' },
@@ -1772,12 +1797,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <input
-            value={userId}
-            onChange={(event) => setUserId(event.target.value)}
-            placeholder="user@email"
-            className="h-9 w-48 rounded-xl border border-white/30 bg-white/10 px-3 text-xs text-white placeholder:text-white/40"
-          />
           <select
             value={provider}
             onChange={(event) => setProvider(event.target.value)}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { LanguageSelector } from 'vegvisr-ui-kit';
 import GrokChatPanel from './components/GrokChatPanel';
 import { LanguageContext } from './lib/LanguageContext';
-import { loginUrl, readStoredUser, type AuthUser } from './lib/auth';
+import { readStoredUser, type AuthUser } from './lib/auth';
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
 import { useTranslation } from './lib/useTranslation';
 
@@ -13,6 +13,11 @@ function App() {
   const [language, setLanguageState] = useState(getStoredLanguage());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authStatus, setAuthStatus] = useState<'checking' | 'authed' | 'anonymous'>('checking');
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginStatus, setLoginStatus] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
   const setLanguage = (value: typeof language) => {
     setLanguageState(value);
@@ -123,6 +128,30 @@ function App() {
     }
   };
 
+  const sendMagicLink = async () => {
+    if (!loginEmail.trim()) return;
+    setLoginError('');
+    setLoginStatus('');
+    setLoginLoading(true);
+    try {
+      const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+      const res = await fetch(`${MAGIC_BASE}/login/magic/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim(), redirectUrl })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to send magic link.');
+      }
+      setLoginStatus('Magic link sent. Check your email.');
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Failed to send magic link.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   useEffect(() => {
     const url = new URL(window.location.href);
     const magic = url.searchParams.get('magic');
@@ -158,8 +187,6 @@ function App() {
     };
   }, []);
 
-  const loginHref = loginUrl(window.location.href);
-
   return (
     <LanguageContext.Provider value={contextValue}>
       <div className="min-h-screen bg-slate-950 text-white">
@@ -172,12 +199,13 @@ function App() {
             <div className="flex items-center gap-3">
               <LanguageSelector value={language} onChange={setLanguage} />
               {authStatus === 'anonymous' ? (
-                <a
-                  href={loginHref}
+                <button
+                  type="button"
+                  onClick={() => setLoginOpen((prev) => !prev)}
                   className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70 hover:bg-white/20"
                 >
                   Sign in
-                </a>
+                </button>
               ) : (
                 <button
                   type="button"
@@ -188,6 +216,36 @@ function App() {
               )}
             </div>
           </header>
+
+          {authStatus === 'anonymous' && loginOpen && (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/60">
+                Magic Link Sign In
+              </div>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <input
+                  type="email"
+                  value={loginEmail}
+                  onChange={(event) => setLoginEmail(event.target.value)}
+                  placeholder="you@email.com"
+                  className="flex-1 rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                />
+                <button
+                  type="button"
+                  onClick={sendMagicLink}
+                  disabled={loginLoading}
+                  className="rounded-2xl bg-gradient-to-r from-sky-500 to-violet-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/30"
+                >
+                  {loginLoading ? 'Sending...' : 'Send link'}
+                </button>
+              </div>
+              {loginStatus && <p className="mt-3 text-xs text-emerald-300">{loginStatus}</p>}
+              {loginError && <p className="mt-3 text-xs text-rose-300">{loginError}</p>}
+              <p className="mt-3 text-xs text-white/50">
+                We will send a secure link that logs you into this app.
+              </p>
+            </div>
+          )}
 
           {authStatus === 'checking' && (
             <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/70">

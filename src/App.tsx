@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LanguageSelector } from 'vegvisr-ui-kit';
+import { AuthBar, LanguageSelector } from 'vegvisr-ui-kit';
 import GrokChatPanel from './components/GrokChatPanel';
 import { LanguageContext } from './lib/LanguageContext';
 import { readStoredUser, type AuthUser } from './lib/auth';
@@ -198,24 +198,12 @@ function App() {
             </div>
             <div className="flex items-center gap-3">
               <LanguageSelector value={language} onChange={setLanguage} />
-              {authStatus === 'anonymous' ? (
-                <button
-                  type="button"
-                  onClick={() => setLoginOpen((prev) => !prev)}
-                  className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70 hover:bg-white/20"
-                >
-                  Sign in
-                </button>
-              ) : (
-                <div className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/70">
-                  <span>{t('app.badge')}</span>
-                  {authUser?.email && (
-                    <span className="normal-case text-[11px] font-medium tracking-normal text-white/60">
-                      {authUser.email}
-                    </span>
-                  )}
-                </div>
-              )}
+              <AuthBar
+                userEmail={authStatus === 'authed' ? authUser?.email : undefined}
+                badgeLabel={t('app.badge')}
+                signInLabel="Sign in"
+                onSignIn={() => setLoginOpen((prev) => !prev)}
+              />
             </div>
           </header>
 

@@ -7,7 +7,7 @@ import { readStoredUser, type AuthUser } from './lib/auth';
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
 import { useTranslation } from './lib/useTranslation';
 
-const MAGIC_BASE = 'https://email-worker.torarnehave.workers.dev';
+const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
 
 function App() {

@@ -1,8 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import favicon16 from 'vegvisr-ui-kit/assets/favicon-16x16.png'
-import favicon32 from 'vegvisr-ui-kit/assets/favicon-32x32.png'
-import favicon512 from 'vegvisr-ui-kit/assets/favicon-512x512.png'
+import aichatIcon from './assets/aichat-icon.png'
 import appleTouchIcon from 'vegvisr-ui-kit/assets/apple-touch-icon.png'
 import './index.css'
 import App from './App.tsx'
@@ -30,9 +28,7 @@ const setIcon = ({
   link.href = href
 }
 
-setIcon({ rel: 'icon', sizes: '16x16', type: 'image/png', href: favicon16 })
-setIcon({ rel: 'icon', sizes: '32x32', type: 'image/png', href: favicon32 })
-setIcon({ rel: 'icon', sizes: '512x512', type: 'image/png', href: favicon512 })
+setIcon({ rel: 'icon', type: 'image/png', href: aichatIcon })
 setIcon({ rel: 'apple-touch-icon', sizes: '180x180', href: appleTouchIcon })
 
 createRoot(document.getElementById('root')!).render(

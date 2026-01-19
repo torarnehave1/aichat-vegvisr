@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AuthBar, LanguageSelector } from 'vegvisr-ui-kit';
+import { AuthBar, EcosystemNav, LanguageSelector } from 'vegvisr-ui-kit';
 import aichatLogo from './assets/aichat-logo.png';
 import GrokChatPanel from './components/GrokChatPanel';
 import { LanguageContext } from './lib/LanguageContext';
@@ -232,6 +232,8 @@ function App() {
               />
             </div>
           </header>
+
+          <EcosystemNav className="mt-4" />
 
           {authStatus === 'anonymous' && loginOpen && (
             <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/80">

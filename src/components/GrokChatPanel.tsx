@@ -2071,6 +2071,15 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                       }
                       alt="Generated"
                       className="max-h-64 rounded-xl border border-white/10 object-contain"
+                      draggable
+                      onDragStart={(event) => {
+                        const fullUrl = getFullImageUrl(message.imageData);
+                        const previewUrl = getImagePreviewUrl(message.imageData);
+                        const url = fullUrl || previewUrl;
+                        if (!url) return;
+                        event.dataTransfer.setData('text/uri-list', url);
+                        event.dataTransfer.setData('text/plain', url);
+                      }}
                       onLoad={() => {
                         const fullUrl = getFullImageUrl(message.imageData);
                         const previewUrl = getImagePreviewUrl(message.imageData);

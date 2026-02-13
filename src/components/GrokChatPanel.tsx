@@ -205,6 +205,7 @@ const CHAT_ENDPOINTS: Record<string, string> = {
 const CHAT_HISTORY_BASE_URL = 'https://api.vegvisr.org/chat-history';
 const AUDIO_ENDPOINT = 'https://openai.vegvisr.org/audio';
 const HTML_IMPORT_ENDPOINT = 'https://test-domain-worker.torarnehave.workers.dev/import-html';
+const KNOWLEDGE_GRAPH_API = 'https://knowledge.vegvisr.org';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -231,6 +232,11 @@ const SUPPORTED_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.op
 type GrokChatPanelProps = {
   initialUserId?: string;
   initialEmail?: string;
+};
+
+type LocalGraphCommandResult = {
+  handled: boolean;
+  response?: string;
 };
 
 const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
@@ -342,6 +348,193 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       return null;
     }
     return trimmed;
+  };
+
+  const createLocalId = (prefix: string) =>
+    `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  const resolveGraphId = () => {
+    const candidate = htmlImportTargetGraphId.trim();
+    return candidate || GRAPH_IDENTIFIER;
+  };
+
+  const loadGraph = async (graphId: string) => {
+    const response = await fetch(`${KNOWLEDGE_GRAPH_API}/getknowgraph?id=${encodeURIComponent(graphId)}`);
+    if (!response.ok) {
+      throw new Error(`Failed to load graph ${graphId} (${response.status})`);
+    }
+    return response.json();
+  };
+
+  const saveGraph = async (graphId: string, graphData: Record<string, unknown>) => {
+    const response = await fetch(`${KNOWLEDGE_GRAPH_API}/saveGraphWithHistory`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': 'Superadmin',
+      },
+      body: JSON.stringify({
+        id: graphId,
+        graphData,
+        override: true,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Failed to save graph (${response.status}): ${detail}`);
+    }
+    return response.json().catch(() => ({}));
+  };
+
+  const executeLocalGraphCommand = async (prompt: string): Promise<LocalGraphCommandResult> => {
+    const text = prompt.trim();
+    if (!text) return { handled: false };
+
+    const graphId = resolveGraphId();
+
+    const createCmd =
+      text.match(/create\s+(?:a\s+)?new\s+html[-\s]?node.*(?:from|based on)\s+node(?:id)?\s*[:=]?\s*([a-zA-Z0-9_-]+)/i) ||
+      text.match(/new\s+html[-\s]?node\s+from\s+([a-zA-Z0-9_-]+)/i);
+    if (createCmd) {
+      const sourceNodeId = createCmd[1];
+      const cssMatch = text.match(/(?:with|and)\s+css(?:\s+from)?\s+(?:node(?:id)?\s*)?([a-zA-Z0-9_-]+)/i);
+      const cssNodeId = cssMatch ? cssMatch[1] : '';
+      const labelMatch = text.match(/label\s*[:=]\s*["']([^"']+)["']/i);
+      const requestedLabel = labelMatch ? labelMatch[1].trim() : '';
+
+      const graph = await loadGraph(graphId);
+      const nodes = Array.isArray(graph?.nodes) ? [...graph.nodes] : [];
+      const edges = Array.isArray(graph?.edges) ? [...graph.edges] : [];
+      const sourceNode = nodes.find((n: any) => n.id === sourceNodeId);
+
+      if (!sourceNode) {
+        return { handled: true, response: `Could not find source node: ${sourceNodeId}` };
+      }
+      if (sourceNode.type && sourceNode.type !== 'html-node') {
+        return { handled: true, response: `Source node ${sourceNodeId} is type "${sourceNode.type}", expected "html-node".` };
+      }
+
+      const newHtmlNodeId = createLocalId('html_node');
+      const newNode = {
+        ...sourceNode,
+        id: newHtmlNodeId,
+        label: requestedLabel || `${sourceNode.label || 'HTML Node'} Copy`,
+        position: sourceNode.position
+          ? {
+              ...sourceNode.position,
+              x: Number(sourceNode.position?.x || 0) + 80,
+              y: Number(sourceNode.position?.y || 0) + 80,
+            }
+          : sourceNode.position,
+        updatedAt: new Date().toISOString(),
+      };
+      nodes.push(newNode);
+
+      if (cssNodeId) {
+        const cssNode = nodes.find((n: any) => n.id === cssNodeId);
+        if (!cssNode) {
+          return { handled: true, response: `Created HTML node ${newHtmlNodeId}, but CSS node not found: ${cssNodeId}` };
+        }
+        if (cssNode.type && cssNode.type !== 'css-node') {
+          return { handled: true, response: `Created HTML node ${newHtmlNodeId}, but node ${cssNodeId} is not a css-node.` };
+        }
+        edges.push({
+          id: createLocalId('edge'),
+          source: cssNodeId,
+          target: newHtmlNodeId,
+          type: 'styles',
+          label: 'styles',
+        });
+      }
+
+      const metadata = {
+        ...(graph?.metadata || {}),
+        updatedAt: new Date().toISOString(),
+        updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
+      };
+
+      await saveGraph(graphId, { nodes, edges, metadata });
+      return {
+        handled: true,
+        response: `Created html-node \`${newHtmlNodeId}\` in graph \`${graphId}\`${cssNodeId ? ` and attached css-node \`${cssNodeId}\`.` : '.'}`,
+      };
+    }
+
+    const attachCmd =
+      text.match(/attach\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)\s+to\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i) ||
+      text.match(/use\s+css\s+node\s*([a-zA-Z0-9_-]+)\s+for\s+html\s+node\s*([a-zA-Z0-9_-]+)/i);
+    if (attachCmd) {
+      const cssNodeId = attachCmd[1];
+      const htmlNodeId = attachCmd[2];
+      const graph = await loadGraph(graphId);
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph?.edges) ? [...graph.edges] : [];
+
+      const cssNode = nodes.find((n: any) => n.id === cssNodeId);
+      const htmlNode = nodes.find((n: any) => n.id === htmlNodeId);
+      if (!cssNode) return { handled: true, response: `CSS node not found: ${cssNodeId}` };
+      if (!htmlNode) return { handled: true, response: `HTML node not found: ${htmlNodeId}` };
+
+      const filteredEdges = edges.filter((edge: any) => {
+        const isStyles = String(edge?.label || edge?.type || '').toLowerCase() === 'styles';
+        return !(isStyles && edge?.target === htmlNodeId);
+      });
+      filteredEdges.push({
+        id: createLocalId('edge'),
+        source: cssNodeId,
+        target: htmlNodeId,
+        type: 'styles',
+        label: 'styles',
+      });
+
+      await saveGraph(graphId, {
+        nodes,
+        edges: filteredEdges,
+        metadata: {
+          ...(graph?.metadata || {}),
+          updatedAt: new Date().toISOString(),
+          updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
+        },
+      });
+      return {
+        handled: true,
+        response: `Attached css-node \`${cssNodeId}\` to html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`,
+      };
+    }
+
+    const detachCmd =
+      text.match(/detach\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)?\s*from\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i) ||
+      text.match(/remove\s+styles?\s+from\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i);
+    if (detachCmd) {
+      const cssNodeId = detachCmd[2] ? (detachCmd[1] || '').trim() : '';
+      const htmlNodeId = detachCmd[2] ? detachCmd[2] : detachCmd[1];
+      const graph = await loadGraph(graphId);
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+      const remainingEdges = edges.filter((edge: any) => {
+        const isStyles = String(edge?.label || edge?.type || '').toLowerCase() === 'styles';
+        if (!isStyles) return true;
+        if (edge?.target !== htmlNodeId) return true;
+        if (cssNodeId && edge?.source !== cssNodeId) return true;
+        return false;
+      });
+      const removed = edges.length - remainingEdges.length;
+      await saveGraph(graphId, {
+        nodes,
+        edges: remainingEdges,
+        metadata: {
+          ...(graph?.metadata || {}),
+          updatedAt: new Date().toISOString(),
+          updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
+        },
+      });
+      return {
+        handled: true,
+        response: `Detached ${removed} styles edge(s) for html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`,
+      };
+    }
+
+    return { handled: false };
   };
 
   const resetHtmlImportState = () => {
@@ -1550,6 +1743,32 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
     appendChatMessage(userMessage, { persist: false });
     setInput('');
+
+    try {
+      const localCommandResult = await executeLocalGraphCommand(trimmed);
+      if (localCommandResult.handled) {
+        const assistantMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: localCommandResult.response || 'Command executed.',
+          provider
+        } as ChatMessage;
+        appendChatMessage(assistantMessage, { persist: false });
+        await persistMessagesAfterAssistant(userMessage, assistantMessage);
+        return;
+      }
+    } catch (error) {
+      const assistantMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `[Local graph command failed: ${error instanceof Error ? error.message : 'unknown error'}]`,
+        provider
+      } as ChatMessage;
+      appendChatMessage(assistantMessage, { persist: false });
+      await persistMessagesAfterAssistant(userMessage, assistantMessage);
+      return;
+    }
+
     const assistantContent = await sendToProvider(trimmed, [...messages, userMessage]);
     if (assistantContent) {
       const assistantMessage = {

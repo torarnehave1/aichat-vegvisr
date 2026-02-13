@@ -204,6 +204,7 @@ const CHAT_ENDPOINTS: Record<string, string> = {
 
 const CHAT_HISTORY_BASE_URL = 'https://api.vegvisr.org/chat-history';
 const AUDIO_ENDPOINT = 'https://openai.vegvisr.org/audio';
+const HTML_IMPORT_ENDPOINT = 'https://test-domain-worker.torarnehave.workers.dev/import-html';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -281,6 +282,20 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [renameInput, setRenameInput] = useState('');
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState('');
+  const [htmlImportOpen, setHtmlImportOpen] = useState(false);
+  const [htmlImportUrl, setHtmlImportUrl] = useState('');
+  const [htmlImportTitle, setHtmlImportTitle] = useState('');
+  const [htmlImportDescription, setHtmlImportDescription] = useState('');
+  const [htmlImportMode, setHtmlImportMode] = useState<'new' | 'current'>('new');
+  const [htmlImportTargetGraphId, setHtmlImportTargetGraphId] = useState(GRAPH_IDENTIFIER);
+  const [htmlImportLoading, setHtmlImportLoading] = useState(false);
+  const [htmlImportError, setHtmlImportError] = useState('');
+  const [htmlImportGraphId, setHtmlImportGraphId] = useState<string | null>(null);
+  const [htmlImportStats, setHtmlImportStats] = useState<{
+    cssBytes?: number;
+    htmlBytes?: number;
+    payloadBytes?: number;
+  } | null>(null);
   const lastInitializedSessionKey = useRef<string | null>(null);
   const sessionInitPromise = useRef<Promise<void> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -327,6 +342,82 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       return null;
     }
     return trimmed;
+  };
+
+  const resetHtmlImportState = () => {
+    setHtmlImportError('');
+    setHtmlImportGraphId(null);
+    setHtmlImportStats(null);
+  };
+
+  const handleImportHtmlTemplate = async () => {
+    const url = htmlImportUrl.trim();
+    const title = htmlImportTitle.trim();
+    const description = htmlImportDescription.trim();
+    const targetGraphId = htmlImportTargetGraphId.trim();
+
+    resetHtmlImportState();
+
+    if (!url) {
+      setHtmlImportError('Please enter a URL to import.');
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      setHtmlImportError('Please enter a valid URL.');
+      return;
+    }
+
+    if (!/^https?:$/i.test(parsedUrl.protocol)) {
+      setHtmlImportError('Only http(s) URLs are supported.');
+      return;
+    }
+
+    if (htmlImportMode === 'current' && !targetGraphId) {
+      setHtmlImportError('Current graph ID is required for import into current graph.');
+      return;
+    }
+
+    setHtmlImportLoading(true);
+    try {
+      const response = await fetch(HTML_IMPORT_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: parsedUrl.toString(),
+          title: title || undefined,
+          description: description || undefined,
+          targetGraphId: htmlImportMode === 'current' ? targetGraphId : undefined,
+          createdBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
+          category: '#HTMLTemplate',
+          metaArea: '#Imported',
+          publicationState: 'draft'
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.success === false) {
+        throw new Error(result?.message || `Import failed (${response.status})`);
+      }
+
+      const graphId = result?.graphId || result?.id;
+      if (!graphId) {
+        throw new Error('Import succeeded but no graphId was returned.');
+      }
+
+      setHtmlImportGraphId(graphId);
+      setHtmlImportStats(result?.stats || null);
+      showToast('HTML template imported successfully.');
+    } catch (error) {
+      setHtmlImportError(error instanceof Error ? error.message : 'Import failed.');
+    } finally {
+      setHtmlImportLoading(false);
+    }
   };
 
   const scrollToBottom = () => {
@@ -1901,6 +1992,129 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                 />
                 {t('chat.templateTools')}
               </label>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-white/70">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/70">
+                {t('chat.htmlImportTitle')}
+              </div>
+              <p className="mt-1 text-xs text-white/50">{t('chat.htmlImportSubtitle')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setHtmlImportOpen((prev) => !prev);
+                resetHtmlImportState();
+              }}
+              className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white/70 hover:bg-white/20"
+            >
+              {htmlImportOpen ? t('chat.htmlImportHide') : t('chat.htmlImportShow')}
+            </button>
+          </div>
+
+          {htmlImportOpen && (
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setHtmlImportMode('new')}
+                  className={`rounded-xl border px-3 py-2 text-xs ${
+                    htmlImportMode === 'new'
+                      ? 'border-emerald-300/50 bg-emerald-400/20 text-emerald-100'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  {t('chat.htmlImportModeNew')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHtmlImportMode('current')}
+                  className={`rounded-xl border px-3 py-2 text-xs ${
+                    htmlImportMode === 'current'
+                      ? 'border-sky-300/50 bg-sky-400/20 text-sky-100'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  {t('chat.htmlImportModeCurrent')}
+                </button>
+              </div>
+
+              {htmlImportMode === 'current' && (
+                <input
+                  value={htmlImportTargetGraphId}
+                  onChange={(event) => setHtmlImportTargetGraphId(event.target.value)}
+                  type="text"
+                  placeholder={t('chat.htmlImportTargetGraphPlaceholder')}
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+              )}
+
+              <input
+                value={htmlImportUrl}
+                onChange={(event) => setHtmlImportUrl(event.target.value)}
+                type="url"
+                placeholder={t('chat.htmlImportUrlPlaceholder')}
+                className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <input
+                  value={htmlImportTitle}
+                  onChange={(event) => setHtmlImportTitle(event.target.value)}
+                  type="text"
+                  placeholder={t('chat.htmlImportGraphTitlePlaceholder')}
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+                <input
+                  value={htmlImportDescription}
+                  onChange={(event) => setHtmlImportDescription(event.target.value)}
+                  type="text"
+                  placeholder={t('chat.htmlImportDescriptionPlaceholder')}
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleImportHtmlTemplate}
+                  disabled={htmlImportLoading || !htmlImportUrl.trim()}
+                  className="rounded-full border border-emerald-300/40 bg-emerald-400/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {htmlImportLoading ? t('chat.htmlImportImporting') : t('chat.htmlImportCta')}
+                </button>
+                {htmlImportGraphId && (
+                  <button
+                    type="button"
+                    onClick={() => window.open(`https://www.vegvisr.org/gnew-viewer?graphId=${htmlImportGraphId}`, '_blank')}
+                    className="rounded-full border border-sky-300/40 bg-sky-400/15 px-4 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-400/25"
+                  >
+                    {t('chat.htmlImportOpenGraph')}
+                  </button>
+                )}
+              </div>
+
+              {htmlImportError && (
+                <div className="rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                  {htmlImportError}
+                </div>
+              )}
+              {htmlImportGraphId && (
+                <div className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                  <div>
+                    {htmlImportMode === 'current' ? t('chat.htmlImportSuccessCurrent') : t('chat.htmlImportSuccess')}{' '}
+                    <code className="font-mono">{htmlImportGraphId}</code>
+                  </div>
+                  {htmlImportStats && (
+                    <div className="mt-1 text-[11px] text-emerald-200/80">
+                      {t('chat.htmlImportStats')}: CSS {Math.round((htmlImportStats.cssBytes || 0) / 1024)} KB, HTML {Math.round((htmlImportStats.htmlBytes || 0) / 1024)} KB, Payload {Math.round((htmlImportStats.payloadBytes || 0) / 1024)} KB
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>

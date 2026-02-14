@@ -204,8 +204,10 @@ const CHAT_ENDPOINTS: Record<string, string> = {
 
 const CHAT_HISTORY_BASE_URL = 'https://api.vegvisr.org/chat-history';
 const AUDIO_ENDPOINT = 'https://openai.vegvisr.org/audio';
-const HTML_IMPORT_ENDPOINT = 'https://test-domain-worker.torarnehave.workers.dev/import-html';
-const KNOWLEDGE_GRAPH_API = 'https://knowledge.vegvisr.org';
+const HTML_IMPORT_ENDPOINT = '/api/import-html';
+const GRAPH_CLONE_HTML_NODE_ENDPOINT = '/api/graph/clone-html-node';
+const GRAPH_ATTACH_STYLES_ENDPOINT = '/api/graph/attach-styles';
+const GRAPH_DETACH_STYLES_ENDPOINT = '/api/graph/detach-styles';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -350,40 +352,42 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     return trimmed;
   };
 
-  const createLocalId = (prefix: string) =>
-    `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
   const resolveGraphId = () => {
     const candidate = htmlImportTargetGraphId.trim();
     return candidate || GRAPH_IDENTIFIER;
   };
 
-  const loadGraph = async (graphId: string) => {
-    const response = await fetch(`${KNOWLEDGE_GRAPH_API}/getknowgraph?id=${encodeURIComponent(graphId)}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load graph ${graphId} (${response.status})`);
-    }
-    return response.json();
-  };
-
-  const saveGraph = async (graphId: string, graphData: Record<string, unknown>) => {
-    const response = await fetch(`${KNOWLEDGE_GRAPH_API}/saveGraphWithHistory`, {
+  const postDomainWorkerJson = async (
+    endpoint: string,
+    payload: Record<string, unknown>
+  ): Promise<Record<string, unknown>> => {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'x-user-role': 'Superadmin',
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        id: graphId,
-        graphData,
-        override: true,
-      }),
+      body: JSON.stringify(payload)
     });
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Failed to save graph (${response.status}): ${detail}`);
+
+    const rawText = await response.text();
+    let json: Record<string, unknown> | null = null;
+    if (rawText) {
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        json = null;
+      }
     }
-    return response.json().catch(() => ({}));
+
+    if (!response.ok || json?.success === false) {
+      const detail =
+        (typeof json?.message === 'string' && json.message) ||
+        rawText ||
+        `Request failed (${response.status})`;
+      throw new Error(detail);
+    }
+
+    return json || {};
   };
 
   const executeLocalGraphCommand = async (prompt: string): Promise<LocalGraphCommandResult> => {
@@ -393,112 +397,52 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     const graphId = resolveGraphId();
 
     const createCmd =
-      text.match(/create\s+(?:a\s+)?new\s+html[-\s]?node.*(?:from|based on)\s+node(?:id)?\s*[:=]?\s*([a-zA-Z0-9_-]+)/i) ||
-      text.match(/new\s+html[-\s]?node\s+from\s+([a-zA-Z0-9_-]+)/i);
+      text.match(
+        /(?:create|clone|duplicate)\s+(?:a\s+)?(?:new\s+)?html(?:[-\s]?node)?[\s\S]*?(?:from|based on|using)\s+node(?:id)?\s*[:=]?\s*([a-zA-Z0-9_-]+)/i
+      ) ||
+      text.match(/(?:new|clone)\s+html(?:[-\s]?node)?\s+from\s+([a-zA-Z0-9_-]+)/i);
     if (createCmd) {
       const sourceNodeId = createCmd[1];
-      const cssMatch = text.match(/(?:with|and)\s+css(?:\s+from)?\s+(?:node(?:id)?\s*)?([a-zA-Z0-9_-]+)/i);
+      const cssMatch = text.match(/(?:with|and|use)\s+css(?:\s+from)?\s+(?:node(?:id)?\s*)?([a-zA-Z0-9_-]+)/i);
       const cssNodeId = cssMatch ? cssMatch[1] : '';
       const labelMatch = text.match(/label\s*[:=]\s*["']([^"']+)["']/i);
       const requestedLabel = labelMatch ? labelMatch[1].trim() : '';
 
-      const graph = await loadGraph(graphId);
-      const nodes = Array.isArray(graph?.nodes) ? [...graph.nodes] : [];
-      const edges = Array.isArray(graph?.edges) ? [...graph.edges] : [];
-      const sourceNode = nodes.find((n: any) => n.id === sourceNodeId);
+      const result = await postDomainWorkerJson(GRAPH_CLONE_HTML_NODE_ENDPOINT, {
+        graphId,
+        sourceHtmlNodeId: sourceNodeId,
+        cssNodeId: cssNodeId || undefined,
+        label: requestedLabel || undefined,
+        userRole: 'Superadmin',
+        userEmail: userEmail.trim() || undefined,
+        clonedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+      });
+      const newHtmlNodeId = String(result?.newHtmlNodeId || '').trim();
 
-      if (!sourceNode) {
-        return { handled: true, response: `Could not find source node: ${sourceNodeId}` };
-      }
-      if (sourceNode.type && sourceNode.type !== 'html-node') {
-        return { handled: true, response: `Source node ${sourceNodeId} is type "${sourceNode.type}", expected "html-node".` };
-      }
-
-      const newHtmlNodeId = createLocalId('html_node');
-      const newNode = {
-        ...sourceNode,
-        id: newHtmlNodeId,
-        label: requestedLabel || `${sourceNode.label || 'HTML Node'} Copy`,
-        position: sourceNode.position
-          ? {
-              ...sourceNode.position,
-              x: Number(sourceNode.position?.x || 0) + 80,
-              y: Number(sourceNode.position?.y || 0) + 80,
-            }
-          : sourceNode.position,
-        updatedAt: new Date().toISOString(),
-      };
-      nodes.push(newNode);
-
-      if (cssNodeId) {
-        const cssNode = nodes.find((n: any) => n.id === cssNodeId);
-        if (!cssNode) {
-          return { handled: true, response: `Created HTML node ${newHtmlNodeId}, but CSS node not found: ${cssNodeId}` };
-        }
-        if (cssNode.type && cssNode.type !== 'css-node') {
-          return { handled: true, response: `Created HTML node ${newHtmlNodeId}, but node ${cssNodeId} is not a css-node.` };
-        }
-        edges.push({
-          id: createLocalId('edge'),
-          source: cssNodeId,
-          target: newHtmlNodeId,
-          type: 'styles',
-          label: 'styles',
-        });
-      }
-
-      const metadata = {
-        ...(graph?.metadata || {}),
-        updatedAt: new Date().toISOString(),
-        updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
-      };
-
-      await saveGraph(graphId, { nodes, edges, metadata });
       return {
         handled: true,
-        response: `Created html-node \`${newHtmlNodeId}\` in graph \`${graphId}\`${cssNodeId ? ` and attached css-node \`${cssNodeId}\`.` : '.'}`,
+        response: `Created html-node \`${newHtmlNodeId || 'unknown'}\` in graph \`${graphId}\`${cssNodeId ? ` and attached css-node \`${cssNodeId}\`.` : '.'}`
       };
     }
 
     const attachCmd =
       text.match(/attach\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)\s+to\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i) ||
-      text.match(/use\s+css\s+node\s*([a-zA-Z0-9_-]+)\s+for\s+html\s+node\s*([a-zA-Z0-9_-]+)/i);
+      text.match(/use\s+css\s+node\s*([a-zA-Z0-9_-]+)\s+for\s+html\s+node\s*([a-zA-Z0-9_-]+)/i) ||
+      text.match(/apply\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)\s+to\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i);
     if (attachCmd) {
       const cssNodeId = attachCmd[1];
       const htmlNodeId = attachCmd[2];
-      const graph = await loadGraph(graphId);
-      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-      const edges = Array.isArray(graph?.edges) ? [...graph.edges] : [];
-
-      const cssNode = nodes.find((n: any) => n.id === cssNodeId);
-      const htmlNode = nodes.find((n: any) => n.id === htmlNodeId);
-      if (!cssNode) return { handled: true, response: `CSS node not found: ${cssNodeId}` };
-      if (!htmlNode) return { handled: true, response: `HTML node not found: ${htmlNodeId}` };
-
-      const filteredEdges = edges.filter((edge: any) => {
-        const isStyles = String(edge?.label || edge?.type || '').toLowerCase() === 'styles';
-        return !(isStyles && edge?.target === htmlNodeId);
-      });
-      filteredEdges.push({
-        id: createLocalId('edge'),
-        source: cssNodeId,
-        target: htmlNodeId,
-        type: 'styles',
-        label: 'styles',
+      await postDomainWorkerJson(GRAPH_ATTACH_STYLES_ENDPOINT, {
+        graphId,
+        cssNodeId,
+        htmlNodeId,
+        replaceExisting: true,
+        userRole: 'Superadmin'
       });
 
-      await saveGraph(graphId, {
-        nodes,
-        edges: filteredEdges,
-        metadata: {
-          ...(graph?.metadata || {}),
-          updatedAt: new Date().toISOString(),
-          updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
-        },
-      });
       return {
         handled: true,
-        response: `Attached css-node \`${cssNodeId}\` to html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`,
+        response: `Attached css-node \`${cssNodeId}\` to html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`
       };
     }
 
@@ -508,29 +452,16 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     if (detachCmd) {
       const cssNodeId = detachCmd[2] ? (detachCmd[1] || '').trim() : '';
       const htmlNodeId = detachCmd[2] ? detachCmd[2] : detachCmd[1];
-      const graph = await loadGraph(graphId);
-      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-      const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-      const remainingEdges = edges.filter((edge: any) => {
-        const isStyles = String(edge?.label || edge?.type || '').toLowerCase() === 'styles';
-        if (!isStyles) return true;
-        if (edge?.target !== htmlNodeId) return true;
-        if (cssNodeId && edge?.source !== cssNodeId) return true;
-        return false;
+      const result = await postDomainWorkerJson(GRAPH_DETACH_STYLES_ENDPOINT, {
+        graphId,
+        cssNodeId: cssNodeId || undefined,
+        htmlNodeId,
+        userRole: 'Superadmin'
       });
-      const removed = edges.length - remainingEdges.length;
-      await saveGraph(graphId, {
-        nodes,
-        edges: remainingEdges,
-        metadata: {
-          ...(graph?.metadata || {}),
-          updatedAt: new Date().toISOString(),
-          updatedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
-        },
-      });
+      const removed = Number(result?.removedStylesEdges || 0);
       return {
         handled: true,
-        response: `Detached ${removed} styles edge(s) for html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`,
+        response: `Detached ${removed} styles edge(s) for html-node \`${htmlNodeId}\` in graph \`${graphId}\`.`
       };
     }
 
@@ -576,35 +507,29 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
     setHtmlImportLoading(true);
     try {
-      const response = await fetch(HTML_IMPORT_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: parsedUrl.toString(),
-          title: title || undefined,
-          description: description || undefined,
-          targetGraphId: htmlImportMode === 'current' ? targetGraphId : undefined,
-          createdBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
-          category: '#HTMLTemplate',
-          metaArea: '#Imported',
-          publicationState: 'draft'
-        })
+      const result = await postDomainWorkerJson(HTML_IMPORT_ENDPOINT, {
+        url: parsedUrl.toString(),
+        title: title || undefined,
+        description: description || undefined,
+        targetGraphId: htmlImportMode === 'current' ? targetGraphId : undefined,
+        createdBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr',
+        category: '#HTMLTemplate',
+        metaArea: '#Imported',
+        publicationState: 'draft'
       });
 
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || result?.success === false) {
-        throw new Error(result?.message || `Import failed (${response.status})`);
-      }
-
-      const graphId = result?.graphId || result?.id;
+      const graphIdValue = result?.graphId ?? result?.id;
+      const graphId = typeof graphIdValue === 'string' ? graphIdValue.trim() : String(graphIdValue || '').trim();
       if (!graphId) {
         throw new Error('Import succeeded but no graphId was returned.');
       }
 
       setHtmlImportGraphId(graphId);
-      setHtmlImportStats(result?.stats || null);
+      const stats =
+        result?.stats && typeof result.stats === 'object'
+          ? (result.stats as { cssBytes?: number; htmlBytes?: number; payloadBytes?: number })
+          : null;
+      setHtmlImportStats(stats);
       showToast('HTML template imported successfully.');
     } catch (error) {
       setHtmlImportError(error instanceof Error ? error.message : 'Import failed.');

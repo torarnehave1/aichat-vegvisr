@@ -5,3 +5,7 @@ pages_build_output_dir = "dist"
 [[services]]
 binding = "AUTH_WORKER"
 service = "auth-worker"
+
+[[services]]
+binding = "DOMAIN_WORKER"
+service = "test-domain-worker"

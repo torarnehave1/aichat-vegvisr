@@ -215,8 +215,7 @@ const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contra
 const GRAPH_CREATE_THEME_PAGE_NODE_ENDPOINT = '/api/graph/create-theme-page-node';
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
 const THEME_CATALOG_ENDPOINT = '/api/theme/catalog';
-const THEME_UPSERT_ENDPOINT = '/api/theme/upsert';
-const THEME_SYNC_FROM_GRAPH_ENDPOINT = '/api/theme/sync-from-graph';
+const THEME_CATALOG_SYNC_FROM_GRAPH_ENDPOINT = '/api/theme/catalog/sync-from-graph';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -703,9 +702,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [themeStudioOpen, setThemeStudioOpen] = useState(false);
   const [themeSearch, setThemeSearch] = useState('');
   const [customThemeTemplates, setCustomThemeTemplates] = useState<ThemeTemplate[]>([]);
-  const [themeCatalogSource, setThemeCatalogSource] = useState<'kv' | 'local'>('kv');
   const [themeCatalogGraphId, setThemeCatalogGraphId] = useState(GRAPH_IDENTIFIER);
-  const [themeCatalogMeta, setThemeCatalogMeta] = useState<Record<string, unknown> | null>(null);
   const [themeCatalogLoading, setThemeCatalogLoading] = useState(false);
   const [themeCatalogError, setThemeCatalogError] = useState('');
   const [themeSelectedId, setThemeSelectedId] = useState(BUILT_IN_THEME_TEMPLATES[0].id);
@@ -875,7 +872,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (themeCatalogSource === 'kv') return;
+    if (userId.trim()) return;
     try {
       const raw = localStorage.getItem(customThemeStorageKey);
       if (!raw) {
@@ -904,23 +901,24 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     } catch {
       setCustomThemeTemplates([]);
     }
-  }, [customThemeStorageKey, themeCatalogSource]);
+  }, [customThemeStorageKey, userId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (themeCatalogSource === 'kv') return;
+    if (userId.trim()) return;
     try {
       localStorage.setItem(customThemeStorageKey, JSON.stringify(customThemeTemplates));
     } catch {
       // Ignore localStorage write errors (quota/private mode)
     }
-  }, [customThemeTemplates, customThemeStorageKey, themeCatalogSource]);
+  }, [customThemeTemplates, customThemeStorageKey, userId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    loadThemeCatalogFromKv().catch(() => null);
+    if (!userId.trim()) return;
+    loadThemesFromCatalog().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1494,7 +1492,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     setThemeCatalogError('');
   };
 
-  const loadThemeCatalogFromKv = async () => {
+  const loadThemesFromCatalog = async () => {
     setThemeCatalogError('');
     setThemeCatalogLoading(true);
     try {
@@ -1506,8 +1504,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.success !== true) {
-        const message = String(data?.message || `Theme catalog unavailable (${response.status}).`);
-        throw new Error(message);
+        throw new Error(String(data?.message || `Theme load failed (${response.status}).`));
       }
       const themes = Array.isArray(data?.themes) ? data.themes : [];
       const validThemes = themes.filter((item: any): item is ThemeTemplate => {
@@ -1515,17 +1512,14 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         return Boolean(item.id && item.label && item.tokens && typeof item.tokens === 'object');
       });
       setCustomThemeTemplates(validThemes.slice(0, 300));
-      setThemeCatalogMeta(data?.meta && typeof data.meta === 'object' ? data.meta : null);
-      setThemeCatalogSource('kv');
     } catch (error) {
-      setThemeCatalogError(error instanceof Error ? error.message : 'Unable to load theme catalog.');
-      setThemeCatalogSource('local');
+      setThemeCatalogError(error instanceof Error ? error.message : 'Unable to load themes.');
     } finally {
       setThemeCatalogLoading(false);
     }
   };
 
-  const handleSyncThemeCatalogFromGraph = async () => {
+  const handleSyncCatalogFromGraph = async () => {
     const graphId = themeCatalogGraphId.trim();
     resetThemeStudioState();
     if (!graphId) {
@@ -1534,7 +1528,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }
     setThemeCatalogLoading(true);
     try {
-      const response = await fetch(THEME_SYNC_FROM_GRAPH_ENDPOINT, {
+      const response = await fetch(THEME_CATALOG_SYNC_FROM_GRAPH_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ graphId })
@@ -1543,8 +1537,8 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       if (!response.ok || data?.success !== true) {
         throw new Error(String(data?.message || `Sync failed (${response.status}).`));
       }
-      await loadThemeCatalogFromKv();
       showToast(`Synced ${Number(data?.count || 0)} themes from graph.`);
+      await loadThemesFromCatalog();
     } catch (error) {
       setThemeCatalogError(error instanceof Error ? error.message : 'Sync failed.');
     } finally {
@@ -1614,14 +1608,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         hostname: String((result?.source as { hostname?: string } | undefined)?.hostname || '')
       });
       showToast(`Created theme "${themeRaw.label}".`);
-
-      if (themeCatalogSource === 'kv') {
-        fetch(THEME_UPSERT_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ theme: themeRaw })
-        }).catch(() => null);
-      }
+      fetch(THEME_CATALOG_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ theme: themeRaw })
+      }).catch(() => null);
     } catch (error) {
       setThemeCreateError(error instanceof Error ? error.message : 'Theme creation failed.');
     } finally {
@@ -1782,13 +1773,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setThemeAiResult({ themeId: theme.id, themeLabel: theme.label });
       showToast(`Created theme \"${theme.label}\".`);
 
-      if (themeCatalogSource === 'kv') {
-        fetch(THEME_UPSERT_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ theme })
-        }).catch(() => null);
-      }
+      fetch(THEME_CATALOG_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ theme })
+      }).catch(() => null);
 
       let resolvedHeroImageUrl = themeAiHeroImageUrl.trim();
       if (!resolvedHeroImageUrl) {
@@ -1838,19 +1827,17 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
           if (htmlNodeId) {
             setThemeAiPageResult({ graphId, htmlNodeId, label: theme.label });
             showToast(`Created theme page node \"${theme.label}\".`);
-            if (themeCatalogSource === 'kv') {
-              fetch(THEME_UPSERT_ENDPOINT, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                body: JSON.stringify({
-                  theme: {
-                    ...theme,
-                    sourceGraphId: graphId,
-                    sourceHtmlNodeId: htmlNodeId
-                  }
-                })
-              }).catch(() => null);
-            }
+            fetch(THEME_CATALOG_ENDPOINT, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...authHeaders() },
+              body: JSON.stringify({
+                theme: {
+                  ...theme,
+                  sourceGraphId: graphId,
+                  sourceHtmlNodeId: htmlNodeId
+                }
+              })
+            }).catch(() => null);
           }
         } catch (error) {
           setThemeAiError(
@@ -1936,14 +1923,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         hostname: graphId
       });
       showToast(`Imported theme "${generatedTheme.label}" from graph ${graphId}.`);
-
-      if (themeCatalogSource === 'kv') {
-        fetch(THEME_UPSERT_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ theme: generatedTheme })
-        }).catch(() => null);
-      }
+      fetch(THEME_CATALOG_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ theme: generatedTheme })
+      }).catch(() => null);
     } catch (error) {
       setThemeCreateError(error instanceof Error ? error.message : 'Theme import from graph failed.');
     } finally {
@@ -3991,7 +3975,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   />
                   <button
                     type="button"
-                    onClick={handleSyncThemeCatalogFromGraph}
+                    onClick={handleSyncCatalogFromGraph}
                     disabled={themeCatalogLoading || !themeCatalogGraphId.trim()}
                     className="rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-4 py-1.5 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-400/25 disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -3999,18 +3983,13 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   </button>
                   <button
                     type="button"
-                    onClick={loadThemeCatalogFromKv}
+                    onClick={loadThemesFromCatalog}
                     disabled={themeCatalogLoading}
                     className="rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    B) Reload from KV
+                    B) Reload themes
                   </button>
                 </div>
-                {themeCatalogMeta && (
-                  <div className="mt-2 text-[11px] text-white/55">
-                    KV meta: <code className="font-mono">{JSON.stringify(themeCatalogMeta)}</code>
-                  </div>
-                )}
                 {themeCatalogError && (
                   <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
                     {themeCatalogError}

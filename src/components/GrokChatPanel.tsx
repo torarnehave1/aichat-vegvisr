@@ -257,6 +257,9 @@ type ThemeTemplate = {
   description: string;
   tags: string[];
   swatches: string[];
+  // If present, Theme Studio renders this HTML directly (matching the theme page in the graph).
+  // Used for "free" themes that are full HTML pages, not contract-driven previews.
+  sourceHtml?: string;
   fontFamily?: string;
   googleFontImportUrl?: string;
   palette?: Array<{ name: string; hex: string }>;
@@ -384,6 +387,7 @@ const buildThemeFromHtmlNode = (node: GraphNode, sourceGraphId: string): ThemeTe
     description: 'Theme loaded from a Theme Graph.',
     tags: ['theme', 'graph', 'theme-page'],
     swatches: swatches.slice(0, 5),
+    sourceHtml: html,
     googleFontImportUrl,
     tokens,
     visibility: 'shared',
@@ -4342,7 +4346,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                       <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-slate-900/40">
                         <iframe
                           title={`Theme preview ${theme.label}`}
-                          srcDoc={buildThemePreviewHtml(theme, { variant: 'card' })}
+                          srcDoc={theme.sourceHtml || buildThemePreviewHtml(theme, { variant: 'card' })}
                           loading="lazy"
                           sandbox=""
                           className="h-36 w-full"
@@ -4631,10 +4635,13 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
               <div className="overflow-hidden rounded-xl border border-white/15 bg-slate-950/40">
                 <iframe
                   title={`Theme modal preview ${previewThemeTemplate.label}`}
-                  srcDoc={buildThemePreviewHtml(previewThemeTemplate, {
-                    variant: 'modal',
-                    imageUrl: themePreviewImageById[previewThemeTemplate.id] || null
-                  })}
+                  srcDoc={
+                    previewThemeTemplate.sourceHtml ||
+                    buildThemePreviewHtml(previewThemeTemplate, {
+                      variant: 'modal',
+                      imageUrl: themePreviewImageById[previewThemeTemplate.id] || null
+                    })
+                  }
                   loading="lazy"
                   sandbox=""
                   className="h-[520px] w-full"

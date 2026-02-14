@@ -214,8 +214,6 @@ const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-templat
 const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
 const GRAPH_CREATE_THEME_PAGE_NODE_ENDPOINT = '/api/graph/create-theme-page-node';
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
-const THEME_CATALOG_ENDPOINT = '/api/theme/catalog';
-const THEME_CATALOG_SYNC_FROM_GRAPH_ENDPOINT = '/api/theme/catalog/sync-from-graph';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -285,6 +283,115 @@ type ThemeTemplate = {
 type ThemeFilterScope = 'all' | 'mine' | 'shared';
 type ThemeSortMode = 'newest' | 'most-used' | 'mine-first';
 type SettingsTab = 'assistant' | 'import' | 'theme';
+
+type GraphNode = {
+  id: string;
+  label?: string;
+  info?: string;
+  type?: string;
+  updatedAt?: string;
+  createdAt?: string;
+};
+
+const extractFirstMatch = (text: string, pattern: RegExp) => {
+  const match = text.match(pattern);
+  return match ? String(match[1] || '').trim() : '';
+};
+
+const collectInlineCss = (html: string) => {
+  let css = '';
+  html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_match, content) => {
+    css += String(content || '') + '\n';
+    return '';
+  });
+  return css;
+};
+
+const findCssVar = (cssText: string, varName: string) => {
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return extractFirstMatch(cssText, new RegExp(`${escaped}\\s*:\\s*([^;]+);`, 'i'));
+};
+
+const extractGoogleFontUrl = (html: string, cssText: string) => {
+  const linkHref = extractFirstMatch(
+    html,
+    /<link[^>]+href=["'](https:\/\/fonts\.googleapis\.com\/css2?[^"']+)["'][^>]*>/i
+  );
+  if (linkHref) return linkHref;
+  const importUrl = extractFirstMatch(
+    cssText,
+    /@import\s+url\(["']?(https:\/\/fonts\.googleapis\.com\/css2?[^"')]+)["']?\)\s*;/i
+  );
+  return importUrl;
+};
+
+const extractHexColors = (text: string, max = 10) => {
+  const matches = text.match(/#[0-9a-fA-F]{6}\b/g) || [];
+  const unique: string[] = [];
+  for (const item of matches) {
+    const normalized = item.toLowerCase();
+    if (!unique.includes(normalized)) unique.push(normalized);
+    if (unique.length >= max) break;
+  }
+  return unique;
+};
+
+const buildThemeFromHtmlNode = (node: GraphNode, sourceGraphId: string): ThemeTemplate | null => {
+  const html = String(node.info || '');
+  const label = String(node.label || '').trim();
+  if (!html || !label) return null;
+  if (!html.toLowerCase().includes('<html') && !html.toLowerCase().includes('<!doctype')) return null;
+
+  const cssText = collectInlineCss(html);
+  const dataTheme = extractFirstMatch(html, /data-v-theme=["']([^"']+)["']/i);
+  const themeId = normalizeThemeId(dataTheme || label || node.id);
+  if (!themeId) return null;
+
+  const googleFontImportUrl = extractGoogleFontUrl(html, cssText) || undefined;
+  const hexes = extractHexColors(html + '\n' + cssText, 8);
+  const fallback = {
+    bg: hexes[0] || '#0b1220',
+    surface: hexes[1] || '#0f172a',
+    surfaceElevated: hexes[1] || '#0f172a',
+    text: hexes[2] || '#ffffff',
+    muted: hexes[3] || '#94a3b8',
+    primary: hexes[4] || '#22d3ee',
+    primaryInk: '#ffffff',
+    border: '#334155',
+    radius: '18px',
+    shadow: '0 22px 50px rgba(15, 23, 42, 0.4)'
+  };
+
+  const tokens = {
+    bg: findCssVar(cssText, '--v-bg') || fallback.bg,
+    surface: findCssVar(cssText, '--v-surface') || fallback.surface,
+    surfaceElevated: findCssVar(cssText, '--v-surface-elevated') || fallback.surfaceElevated,
+    text: findCssVar(cssText, '--v-text') || fallback.text,
+    muted: findCssVar(cssText, '--v-muted') || fallback.muted,
+    primary: findCssVar(cssText, '--v-primary') || fallback.primary,
+    primaryInk: findCssVar(cssText, '--v-primary-ink') || fallback.primaryInk,
+    border: findCssVar(cssText, '--v-border') || fallback.border,
+    radius: findCssVar(cssText, '--v-radius') || fallback.radius,
+    shadow: findCssVar(cssText, '--v-shadow') || fallback.shadow
+  };
+
+  const swatches = [tokens.bg, tokens.surface, tokens.text, tokens.muted, tokens.primary].filter(Boolean);
+
+  return {
+    id: themeId,
+    label,
+    description: 'Theme loaded from a Theme Graph.',
+    tags: ['theme', 'graph', 'theme-page'],
+    swatches: swatches.slice(0, 5),
+    googleFontImportUrl,
+    tokens,
+    visibility: 'shared',
+    updatedAt: node.updatedAt || node.createdAt || null,
+    createdAt: node.createdAt || null,
+    sourceGraphId,
+    sourceHtmlNodeId: node.id || null
+  };
+};
 
 const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
   {
@@ -777,11 +884,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     return `grok-chat-session:${userId.trim()}:${GRAPH_IDENTIFIER}`;
   }, [canPersistHistory, userId]);
 
-  const customThemeStorageKey = useMemo(() => {
-    const owner = userId.trim() || initialEmail?.trim() || 'anon';
-    return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:${owner}`;
-  }, [userId, initialEmail]);
-
   const themeUsageStorageKey = useMemo(() => {
     const owner = userId.trim() || initialEmail?.trim() || 'anon';
     return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:usage:v1:${owner}`;
@@ -872,53 +974,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (userId.trim()) return;
-    try {
-      const raw = localStorage.getItem(customThemeStorageKey);
-      if (!raw) {
-        setCustomThemeTemplates([]);
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        setCustomThemeTemplates([]);
-        return;
-      }
-      const validThemes = parsed.filter((item): item is ThemeTemplate => {
-        if (!item || typeof item !== 'object') return false;
-        const theme = item as Partial<ThemeTemplate>;
-        return Boolean(
-          typeof theme.id === 'string' &&
-            typeof theme.label === 'string' &&
-            typeof theme.description === 'string' &&
-            Array.isArray(theme.tags) &&
-            Array.isArray(theme.swatches) &&
-            theme.tokens &&
-            typeof theme.tokens === 'object'
-        );
-      });
-      setCustomThemeTemplates(validThemes.slice(0, 100));
-    } catch {
-      setCustomThemeTemplates([]);
-    }
-  }, [customThemeStorageKey, userId]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (userId.trim()) return;
-    try {
-      localStorage.setItem(customThemeStorageKey, JSON.stringify(customThemeTemplates));
-    } catch {
-      // Ignore localStorage write errors (quota/private mode)
-    }
-  }, [customThemeTemplates, customThemeStorageKey, userId]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!userId.trim()) return;
-    loadThemesFromCatalog().catch(() => null);
+    if (!themeStudioOpen) return;
+    if (customThemeTemplates.length > 0) return;
+    loadThemesFromGraph().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [themeStudioOpen]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1492,26 +1552,28 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     setThemeCatalogError('');
   };
 
-  const loadThemesFromCatalog = async () => {
+  const loadThemesFromGraph = async () => {
     setThemeCatalogError('');
     setThemeCatalogLoading(true);
     try {
-      const response = await fetch(THEME_CATALOG_ENDPOINT, {
-        method: 'GET',
-        headers: {
-          ...authHeaders()
-        }
-      });
+      const graphId = themeCatalogGraphId.trim();
+      if (!graphId) throw new Error('Graph ID is required.');
+
+      const url = new URL(GRAPH_GET_ENDPOINT, window.location.origin);
+      url.searchParams.set('id', graphId);
+      const response = await fetch(url.toString(), { method: 'GET', headers: { ...authHeaders() } });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.success !== true) {
-        throw new Error(String(data?.message || `Theme load failed (${response.status}).`));
+      if (!response.ok || !data || !Array.isArray(data?.nodes)) {
+        throw new Error(String(data?.message || `Graph load failed (${response.status}).`));
       }
-      const themes = Array.isArray(data?.themes) ? data.themes : [];
-      const validThemes = themes.filter((item: any): item is ThemeTemplate => {
-        if (!item || typeof item !== 'object') return false;
-        return Boolean(item.id && item.label && item.tokens && typeof item.tokens === 'object');
-      });
-      setCustomThemeTemplates(validThemes.slice(0, 300));
+
+      const nodes: GraphNode[] = data.nodes;
+      const themes: ThemeTemplate[] = nodes
+        .filter((node) => String(node?.type || '').toLowerCase() === 'html-node')
+        .map((node) => buildThemeFromHtmlNode(node, graphId))
+        .filter((theme): theme is ThemeTemplate => Boolean(theme && theme.id && theme.tokens));
+
+      setCustomThemeTemplates(themes.slice(0, 300));
     } catch (error) {
       setThemeCatalogError(error instanceof Error ? error.message : 'Unable to load themes.');
     } finally {
@@ -1519,31 +1581,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }
   };
 
-  const handleSyncCatalogFromGraph = async () => {
-    const graphId = themeCatalogGraphId.trim();
+  const handleLoadThemesFromGraph = async () => {
     resetThemeStudioState();
-    if (!graphId) {
-      setThemeCatalogError('Graph ID is required.');
-      return;
-    }
-    setThemeCatalogLoading(true);
-    try {
-      const response = await fetch(THEME_CATALOG_SYNC_FROM_GRAPH_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ graphId })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.success !== true) {
-        throw new Error(String(data?.message || `Sync failed (${response.status}).`));
-      }
-      showToast(`Synced ${Number(data?.count || 0)} themes from graph.`);
-      await loadThemesFromCatalog();
-    } catch (error) {
-      setThemeCatalogError(error instanceof Error ? error.message : 'Sync failed.');
-    } finally {
-      setThemeCatalogLoading(false);
-    }
+    await loadThemesFromGraph();
   };
 
   const buildThemePrompt = (theme: ThemeTemplate) =>
@@ -1608,11 +1648,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         hostname: String((result?.source as { hostname?: string } | undefined)?.hostname || '')
       });
       showToast(`Created theme "${themeRaw.label}".`);
-      fetch(THEME_CATALOG_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ theme: themeRaw })
-      }).catch(() => null);
     } catch (error) {
       setThemeCreateError(error instanceof Error ? error.message : 'Theme creation failed.');
     } finally {
@@ -1773,12 +1808,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setThemeAiResult({ themeId: theme.id, themeLabel: theme.label });
       showToast(`Created theme \"${theme.label}\".`);
 
-      fetch(THEME_CATALOG_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ theme })
-      }).catch(() => null);
-
       let resolvedHeroImageUrl = themeAiHeroImageUrl.trim();
       if (!resolvedHeroImageUrl) {
         try {
@@ -1827,17 +1856,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
           if (htmlNodeId) {
             setThemeAiPageResult({ graphId, htmlNodeId, label: theme.label });
             showToast(`Created theme page node \"${theme.label}\".`);
-            fetch(THEME_CATALOG_ENDPOINT, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...authHeaders() },
-              body: JSON.stringify({
-                theme: {
-                  ...theme,
-                  sourceGraphId: graphId,
-                  sourceHtmlNodeId: htmlNodeId
-                }
-              })
-            }).catch(() => null);
+            if (themeCatalogGraphId.trim() === graphId) {
+              loadThemesFromGraph().catch(() => null);
+            }
           }
         } catch (error) {
           setThemeAiError(
@@ -1923,11 +1944,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         hostname: graphId
       });
       showToast(`Imported theme "${generatedTheme.label}" from graph ${graphId}.`);
-      fetch(THEME_CATALOG_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ theme: generatedTheme })
-      }).catch(() => null);
     } catch (error) {
       setThemeCreateError(error instanceof Error ? error.message : 'Theme import from graph failed.');
     } finally {
@@ -3960,10 +3976,10 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
             <div className="mt-4 space-y-3">
               <div className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-400/10 px-3 py-3">
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-fuchsia-100">
-                  Theme Catalog (Graph to KV)
+                  Theme Graph (Source of truth)
                 </div>
                 <p className="mt-1 text-xs text-fuchsia-100/80">
-                  Loads themes from a theme graph, stores them in KV, and then the Theme Studio grid uses that KV catalog.
+                  Loads themes directly from the Theme Graph html-nodes. No KV sync needed.
                 </p>
                 <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
                   <input
@@ -3975,15 +3991,15 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   />
                   <button
                     type="button"
-                    onClick={handleSyncCatalogFromGraph}
+                    onClick={handleLoadThemesFromGraph}
                     disabled={themeCatalogLoading || !themeCatalogGraphId.trim()}
                     className="rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-4 py-1.5 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-400/25 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {themeCatalogLoading ? 'Syncing...' : 'A) Sync KV from graph'}
+                    {themeCatalogLoading ? 'Loading...' : 'A) Load themes'}
                   </button>
                   <button
                     type="button"
-                    onClick={loadThemesFromCatalog}
+                    onClick={loadThemesFromGraph}
                     disabled={themeCatalogLoading}
                     className="rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                   >

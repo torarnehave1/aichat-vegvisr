@@ -212,7 +212,6 @@ const GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT = '/api/graph/apply-theme-template';
 const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-template-bulk';
 const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
-const THEME_CUSTOM_ENDPOINT = '/api/theme/custom';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -578,7 +577,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [editingThemeVisibility, setEditingThemeVisibility] = useState<'shared' | 'private'>('shared');
   const [editingThemeSaving, setEditingThemeSaving] = useState(false);
   const [editingThemeError, setEditingThemeError] = useState('');
-  const [customThemesLoadedFromLocal, setCustomThemesLoadedFromLocal] = useState(false);
   const lastInitializedSessionKey = useRef<string | null>(null);
   const sessionInitPromise = useRef<Promise<void> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -597,11 +595,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const themeUsageStorageKey = useMemo(() => {
     const owner = userId.trim() || initialEmail?.trim() || 'anon';
     return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:usage:v1:${owner}`;
-  }, [userId, initialEmail]);
-
-  const localToServerMigrationKey = useMemo(() => {
-    const owner = userId.trim() || initialEmail?.trim() || 'anon';
-    return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:migrated:v1:${owner}`;
   }, [userId, initialEmail]);
 
   const builtInThemeIds = useMemo(
@@ -711,8 +704,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setCustomThemeTemplates(validThemes.slice(0, 100));
     } catch {
       setCustomThemeTemplates([]);
-    } finally {
-      setCustomThemesLoadedFromLocal(true);
     }
   }, [customThemeStorageKey]);
 
@@ -774,54 +765,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setUploadedImage(null);
     }
   }, [providerSupportsImages]);
-
-  useEffect(() => {
-    fetchCustomThemesFromServer();
-  }, [userId, userEmail]);
-
-  useEffect(() => {
-    if (!customThemesLoadedFromLocal) return;
-    if (!userId.trim()) return;
-    if (typeof window === 'undefined') return;
-
-    try {
-      if (localStorage.getItem(localToServerMigrationKey) === '1') return;
-    } catch {
-      // ignore localStorage read errors
-    }
-
-    const legacyThemes = customThemeTemplates.filter(
-      (theme) => !builtInThemeIds.has(theme.id) && !theme.ownerUserId
-    );
-
-    if (!legacyThemes.length) {
-      try {
-        localStorage.setItem(localToServerMigrationKey, '1');
-      } catch {
-        // ignore localStorage write errors
-      }
-      return;
-    }
-
-    (async () => {
-      for (const theme of legacyThemes) {
-        await saveCustomThemeToServer(theme, theme.visibility || 'shared');
-      }
-      try {
-        localStorage.setItem(localToServerMigrationKey, '1');
-      } catch {
-        // ignore localStorage write errors
-      }
-      fetchCustomThemesFromServer();
-      showToast(`Migrated ${legacyThemes.length} local theme(s) to shared storage.`);
-    })();
-  }, [
-    customThemesLoadedFromLocal,
-    userId,
-    customThemeTemplates,
-    builtInThemeIds,
-    localToServerMigrationKey
-  ]);
 
   useEffect(() => {
     if (initialUserId && initialUserId !== userId) {
@@ -915,83 +858,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     return json || {};
   };
 
-  const fetchCustomThemesFromServer = async () => {
-    if (!userId.trim()) return;
-    try {
-      const response = await fetch(THEME_CUSTOM_ENDPOINT, {
-        method: 'GET',
-        headers: { ...authHeaders() }
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.success === false) {
-        throw new Error(
-          (typeof data?.message === 'string' && data.message) ||
-            `Failed to load themes (${response.status})`
-        );
-      }
-      const themes = Array.isArray(data?.themes) ? (data.themes as ThemeTemplate[]) : [];
-      if (!themes.length) return;
-      setCustomThemeTemplates((prev) => {
-        const builtInIds = new Set(BUILT_IN_THEME_TEMPLATES.map((item) => item.id));
-        const merged = new Map(prev.map((theme) => [theme.id, theme]));
-        themes.forEach((theme) => {
-          if (!theme?.id || builtInIds.has(theme.id)) return;
-          merged.set(theme.id, theme);
-        });
-        return [...merged.values()];
-      });
-    } catch (error) {
-      console.warn('Theme Studio server sync failed:', error);
-    }
-  };
-
-  const saveCustomThemeToServer = async (
-    theme: ThemeTemplate,
-    visibility: 'shared' | 'private' = 'shared'
-  ): Promise<boolean> => {
-    if (!userId.trim()) return false;
-    try {
-      const response = await fetch(THEME_CUSTOM_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
-        },
-        body: JSON.stringify({
-          theme,
-          visibility
-        })
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Failed to save theme (${response.status})`);
-      }
-      return true;
-    } catch (error) {
-      console.warn('Theme Studio server persist failed:', error);
-      return false;
-    }
-  };
-
-  const deleteCustomThemeFromServer = async (themeId: string): Promise<boolean> => {
-    if (!userId.trim()) return false;
-    try {
-      const params = new URLSearchParams({ themeId });
-      const response = await fetch(`${THEME_CUSTOM_ENDPOINT}?${params.toString()}`, {
-        method: 'DELETE',
-        headers: { ...authHeaders() }
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Failed to delete theme (${response.status})`);
-      }
-      return true;
-    } catch (error) {
-      console.warn('Theme Studio server delete failed:', error);
-      return false;
-    }
-  };
-
   const isCustomThemeEditable = (theme: ThemeTemplate) => {
     if (builtInThemeIds.has(theme.id)) return false;
     const trimmedUserId = userId.trim();
@@ -1051,12 +917,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         prev.map((theme) => (theme.id === editedTheme.id ? editedTheme : theme))
       );
 
-      const persisted = await saveCustomThemeToServer(editedTheme, editingThemeVisibility);
-      if (!persisted) {
-        setEditingThemeError('Saved locally, but failed to sync to server.');
-        return;
-      }
-
       showToast(`Updated theme "${editedTheme.label}".`);
       cancelEditCustomTheme();
     } catch (error) {
@@ -1072,16 +932,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       const confirmed = window.confirm(`Delete theme "${theme.label}"?`);
       if (!confirmed) return;
     }
-    const removedOnServer = await deleteCustomThemeFromServer(theme.id);
     setCustomThemeTemplates((prev) => prev.filter((item) => item.id !== theme.id));
     if (themeSelectedId === theme.id) {
       setThemeSelectedId(BUILT_IN_THEME_TEMPLATES[0].id);
     }
-    showToast(
-      removedOnServer
-        ? `Deleted theme "${theme.label}".`
-        : `Deleted local theme "${theme.label}" (server delete failed).`
-    );
+    showToast(`Deleted theme "${theme.label}".`);
   };
 
   const executeLocalGraphCommand = async (prompt: string): Promise<LocalGraphCommandResult> => {
@@ -1126,7 +981,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         const next = prev.filter((item) => item.id !== themeRaw.id);
         return [themeRaw, ...next];
       });
-      saveCustomThemeToServer(themeRaw);
       setThemeSelectedId(themeRaw.id);
       setThemeCreateResult({
         themeId: themeRaw.id,
@@ -1423,7 +1277,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         const next = prev.filter((item) => item.id !== themeRaw.id);
         return [themeRaw, ...next];
       });
-      saveCustomThemeToServer(themeRaw);
       setThemeSelectedId(themeRaw.id);
       setThemeCreateResult({
         themeId: themeRaw.id,

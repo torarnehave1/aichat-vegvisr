@@ -212,6 +212,7 @@ const GRAPH_GET_ENDPOINT = '/api/graph/getknowgraph';
 const GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT = '/api/graph/apply-theme-template';
 const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-template-bulk';
 const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
+const GRAPH_CREATE_THEME_PAGE_NODE_ENDPOINT = '/api/graph/create-theme-page-node';
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
@@ -257,6 +258,7 @@ type ThemeTemplate = {
   swatches: string[];
   fontFamily?: string;
   googleFontImportUrl?: string;
+  palette?: Array<{ name: string; hex: string }>;
   tokens: {
     bg: string;
     surface: string;
@@ -402,6 +404,40 @@ const normalizeThemeId = (value: string) =>
     .replace(/[^a-z0-9-_]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+
+const extractJsonObjectFromText = (rawText: string) => {
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+
+  const candidates: string[] = [];
+  candidates.push(text);
+
+  const fenceMatch = text.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);
+  if (fenceMatch?.[1]) {
+    candidates.unshift(fenceMatch[1].trim());
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+
+    const first = candidate.indexOf('{');
+    const last = candidate.lastIndexOf('}');
+    if (first !== -1 && last !== -1 && last > first) {
+      const slice = candidate.slice(first, last + 1);
+      try {
+        return JSON.parse(slice);
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  return null;
+};
 
 const resolveThemeTemplateInCatalog = (value: string, catalog: ThemeTemplate[]): ThemeTemplate | null => {
   const needle = normalizeThemeSearch(value);
@@ -665,6 +701,21 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [themeSelectedId, setThemeSelectedId] = useState(BUILT_IN_THEME_TEMPLATES[0].id);
   const [themeSourceUrl, setThemeSourceUrl] = useState('');
   const [themeSourceLabel, setThemeSourceLabel] = useState('');
+  const [themeAiMode, setThemeAiMode] = useState<'new' | 'remix'>('new');
+  const [themeAiLabel, setThemeAiLabel] = useState('');
+  const [themeAiPrompt, setThemeAiPrompt] = useState('');
+  const [themeAiGoogleFontUrl, setThemeAiGoogleFontUrl] = useState('');
+  const [themeAiCreatePage, setThemeAiCreatePage] = useState(true);
+  const [themeAiGraphId, setThemeAiGraphId] = useState(GRAPH_IDENTIFIER);
+  const [themeAiHeroImageUrl, setThemeAiHeroImageUrl] = useState('');
+  const [themeAiLoading, setThemeAiLoading] = useState(false);
+  const [themeAiError, setThemeAiError] = useState('');
+  const [themeAiResult, setThemeAiResult] = useState<{ themeId: string; themeLabel: string } | null>(null);
+  const [themeAiPageResult, setThemeAiPageResult] = useState<{
+    graphId: string;
+    htmlNodeId: string;
+    label: string;
+  } | null>(null);
   const [themeImportGraphId, setThemeImportGraphId] = useState(GRAPH_IDENTIFIER);
   const [themeImportCssNodeId, setThemeImportCssNodeId] = useState('');
   const [themeImportLabel, setThemeImportLabel] = useState('');
@@ -1419,6 +1470,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     setThemeValidationResult(null);
     setThemeCreateError('');
     setThemeCreateResult(null);
+    setThemeAiError('');
+    setThemeAiResult(null);
+    setThemeAiPageResult(null);
   };
 
   const buildThemePrompt = (theme: ThemeTemplate) =>
@@ -1487,6 +1541,225 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setThemeCreateError(error instanceof Error ? error.message : 'Theme creation failed.');
     } finally {
       setThemeCreateLoading(false);
+    }
+  };
+
+  const handleGenerateThemeWithAi = async () => {
+    const requiredUserId = getRequiredUserId();
+    if (!requiredUserId) return;
+
+    const labelValue = themeAiLabel.trim();
+    const promptValue = themeAiPrompt.trim();
+    const fontUrlValue = themeAiGoogleFontUrl.trim();
+
+    resetThemeStudioState();
+    if (!promptValue) {
+      setThemeAiError('Please describe the theme you want.');
+      return;
+    }
+
+      setThemeAiLoading(true);
+      try {
+      const system = `You generate Vegvisr Theme Studio theme templates.\n\nReturn JSON only (no markdown, no code fences).\nSchema:\n{\n  \"id\": \"kebab-case\",\n  \"label\": \"Human name\",\n  \"description\": \"1 short sentence\",\n  \"tags\": [\"tag\"],\n  \"googleFontImportUrl\": \"https://fonts.googleapis.com/...\",\n  \"fontFamily\": \"'Font Name', -apple-system, 'Segoe UI', sans-serif\",\n  \"palette\": [\n    { \"name\": \"Color name\", \"hex\": \"#RRGGBB\" }\n  ],\n  \"tokens\": {\n    \"bg\": \"#RRGGBB\",\n    \"surface\": \"#RRGGBB\",\n    \"surfaceElevated\": \"#RRGGBB\",\n    \"text\": \"#RRGGBB\",\n    \"muted\": \"#RRGGBB\",\n    \"primary\": \"#RRGGBB\",\n    \"primaryInk\": \"#RRGGBB\",\n    \"border\": \"#RRGGBB\",\n    \"radius\": \"16px\",\n    \"shadow\": \"0 20px 45px rgba(0,0,0,0.12)\"\n  }\n}\nRules:\n- Ensure readable contrast: text must be readable on bg and surface.\n- primaryInk must be readable on primary.\n- tags: 3-6 short tags.\n- radius: px value between 12px and 24px.\n- Provide cohesive palette, modern web UI.\n- Extra keys are allowed but will be ignored.\n`;
+
+      const remixContext =
+        themeAiMode === 'remix'
+          ? `\nRemix this existing theme (keep it recognizable but distinct):\n${JSON.stringify(
+              {
+                id: selectedThemeTemplate.id,
+                label: selectedThemeTemplate.label,
+                tags: selectedThemeTemplate.tags,
+                tokens: selectedThemeTemplate.tokens,
+                googleFontImportUrl: selectedThemeTemplate.googleFontImportUrl,
+                fontFamily: selectedThemeTemplate.fontFamily
+              },
+              null,
+              2
+            )}\n`
+          : '';
+
+      const userMessage = `Create a new theme.\nPreferred label (optional): ${labelValue || '(choose)'}\nGoogle font import URL (optional): ${
+        fontUrlValue || '(choose)'
+      }\nTheme description:\n${promptValue}\n${remixContext}`;
+
+      const payload = {
+        userId: requiredUserId,
+        model: 'gpt-5.2',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userMessage }
+        ],
+        context: { useGraphContext: false, useSelectionContext: false },
+        tools: { useProffTools: false, useSourcesTools: false, useTemplateTools: false },
+        attachments: { imageName: null, audioName: null },
+        stream: false
+      };
+
+      const response = await fetch(CHAT_ENDPOINTS.openai, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        throw new Error(`OpenAI worker failed (${response.status}).`);
+      }
+      const data = await response.json().catch(() => ({}));
+      const rawContent =
+        data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.text ||
+        data?.message ||
+        '';
+
+      const parsed = extractJsonObjectFromText(String(rawContent || ''));
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('AI returned invalid JSON. Try again with a shorter prompt.');
+      }
+
+      const candidate = parsed as Partial<ThemeTemplate> & {
+        tokens?: Partial<ThemeTemplate['tokens']>;
+        palette?: Array<{ name?: string; hex?: string }>;
+      };
+      const finalId = normalizeThemeId(String(candidate.id || labelValue || '')) || `ai-theme-${Date.now()}`;
+      const finalLabel = String(candidate.label || labelValue || 'AI Theme').trim() || 'AI Theme';
+      const tags = Array.isArray(candidate.tags)
+        ? candidate.tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 8)
+        : ['ai', 'custom', 'theme'];
+
+      const tokens = (candidate.tokens || {}) as Partial<ThemeTemplate['tokens']>;
+      const bg = String(tokens.bg || '#0b1220').trim();
+      const surface = String(tokens.surface || '#0f172a').trim();
+      const surfaceElevated = String(tokens.surfaceElevated || '#111c33').trim();
+      const text = String(tokens.text || '#f8fafc').trim();
+      const muted = String(tokens.muted || '#94a3b8').trim();
+      const primary = String(tokens.primary || '#22d3ee').trim();
+      const primaryInk = String(tokens.primaryInk || '#0f172a').trim();
+      const border = String(tokens.border || '#334155').trim();
+      const radius = String(tokens.radius || '16px').trim();
+      const shadow = String(tokens.shadow || '0 22px 50px rgba(15, 23, 42, 0.4)').trim();
+
+      let googleFontImportUrl = String(candidate.googleFontImportUrl || '').trim();
+      let fontFamily = String(candidate.fontFamily || '').trim();
+      if (fontUrlValue) {
+        googleFontImportUrl = fontUrlValue;
+        if (!fontFamily) {
+          const family = fontUrlValue.match(/family=([^:&]+)/)?.[1]?.replace(/\\+/g, ' ') || 'Inter';
+          fontFamily = `'${family}', -apple-system, 'Segoe UI', sans-serif`;
+        }
+      }
+      if (!googleFontImportUrl) {
+        googleFontImportUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap';
+      }
+      if (!fontFamily) {
+        fontFamily = "'Inter', -apple-system, 'Segoe UI', sans-serif";
+      }
+
+      const theme: ThemeTemplate = {
+        id: finalId,
+        label: finalLabel,
+        description: String(candidate.description || 'AI-generated theme template.').trim(),
+        tags,
+        swatches: [bg, surface, text, muted, primary],
+        fontFamily,
+        googleFontImportUrl,
+        palette: Array.isArray(candidate.palette)
+          ? candidate.palette
+              .map((item) => ({
+                name: String(item?.name || '').trim() || 'Color',
+                hex: String(item?.hex || '').trim()
+              }))
+              .filter((item) => item.hex)
+              .slice(0, 10)
+          : undefined,
+        tokens: {
+          bg,
+          surface,
+          surfaceElevated,
+          text,
+          muted,
+          primary,
+          primaryInk,
+          border,
+          radius,
+          shadow
+        },
+        ownerUserId: requiredUserId,
+        ownerEmail: userEmail.trim() || null,
+        visibility: (candidate.visibility === 'private' ? 'private' : 'shared') as 'shared' | 'private',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      setCustomThemeTemplates((prev) => {
+        const next = prev.filter((item) => item.id !== theme.id);
+        return [theme, ...next].slice(0, 100);
+      });
+      setThemeSelectedId(theme.id);
+      setThemeAiResult({ themeId: theme.id, themeLabel: theme.label });
+      showToast(`Created theme \"${theme.label}\".`);
+
+      let resolvedHeroImageUrl = themeAiHeroImageUrl.trim();
+      if (!resolvedHeroImageUrl) {
+        try {
+          const query = [theme.label, ...theme.tags.slice(0, 2), 'website ui'].filter(Boolean).join(' ');
+          const response = await fetch('https://api.vegvisr.org/unsplash-search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, count: 1 })
+          });
+          if (response.ok) {
+            const data = await response.json().catch(() => ({}));
+            const firstImage = Array.isArray(data?.images) ? data.images[0] : null;
+            const imageUrl = String(firstImage?.url || '').trim();
+            if (imageUrl) {
+              resolvedHeroImageUrl = imageUrl;
+              setThemePreviewImageById((prev) => ({ ...prev, [theme.id]: imageUrl }));
+              const downloadLocation = String(firstImage?.download_location || '').trim();
+              if (downloadLocation) {
+                fetch('https://api.vegvisr.org/unsplash-download', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ download_location: downloadLocation })
+                }).catch(() => null);
+              }
+            }
+          }
+        } catch {
+          // ignore preview image errors
+        }
+      }
+
+      if (themeAiCreatePage) {
+        const graphId = themeAiGraphId.trim() || resolveGraphId();
+        try {
+          const result = await postDomainWorkerJson(GRAPH_CREATE_THEME_PAGE_NODE_ENDPOINT, {
+            graphId,
+            theme,
+            label: theme.label,
+            heroImageUrl: resolvedHeroImageUrl || undefined,
+            promptText: promptValue,
+            userRole: 'Superadmin',
+            userEmail: userEmail.trim() || undefined,
+            createdBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+          });
+          const htmlNodeId = String(result?.newHtmlNodeId || '').trim();
+          if (htmlNodeId) {
+            setThemeAiPageResult({ graphId, htmlNodeId, label: theme.label });
+            showToast(`Created theme page node \"${theme.label}\".`);
+          }
+        } catch (error) {
+          setThemeAiError(
+            error instanceof Error
+              ? error.message
+              : 'Theme was created, but theme page node creation failed.'
+          );
+        }
+      }
+
+      openThemePreviewModal(theme).catch(() => null);
+    } catch (error) {
+      setThemeAiError(error instanceof Error ? error.message : 'AI theme generation failed.');
+    } finally {
+      setThemeAiLoading(false);
     }
   };
 
@@ -3587,6 +3860,118 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
           {themeStudioOpen && (
             <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-100">
+                  Generate Theme With AI (GPT-5.2)
+                </div>
+                <p className="mt-1 text-xs text-amber-100/80">
+                  Describe the vibe and palette. Vegvisr will generate a new Theme Studio template you can apply to HTML nodes.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setThemeAiMode('new')}
+                    className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                      themeAiMode === 'new'
+                        ? 'border-amber-300/50 bg-amber-400/20 text-amber-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    A) Create new theme
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThemeAiMode('remix')}
+                    className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                      themeAiMode === 'remix'
+                        ? 'border-amber-300/50 bg-amber-400/20 text-amber-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    B) Remix selected theme
+                  </button>
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr]">
+                  <input
+                    value={themeAiLabel}
+                    onChange={(event) => setThemeAiLabel(event.target.value)}
+                    type="text"
+                    placeholder="Theme name (optional)"
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                  />
+                  <input
+                    value={themeAiGoogleFontUrl}
+                    onChange={(event) => setThemeAiGoogleFontUrl(event.target.value)}
+                    type="url"
+                    placeholder="Google Fonts CSS URL (optional)"
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                  />
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[auto_1fr]">
+                  <button
+                    type="button"
+                    onClick={() => setThemeAiCreatePage((prev) => !prev)}
+                    className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                      themeAiCreatePage
+                        ? 'border-amber-300/50 bg-amber-400/20 text-amber-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    C) Also create Theme Page node
+                  </button>
+                  <input
+                    value={themeAiGraphId}
+                    onChange={(event) => setThemeAiGraphId(event.target.value)}
+                    type="text"
+                    placeholder="Theme graph ID (where the html-node should be created)"
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                  />
+                </div>
+                <input
+                  value={themeAiHeroImageUrl}
+                  onChange={(event) => setThemeAiHeroImageUrl(event.target.value)}
+                  type="url"
+                  placeholder="Hero image URL (optional, uses Unsplash if empty)"
+                  className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                />
+                <textarea
+                  value={themeAiPrompt}
+                  onChange={(event) => setThemeAiPrompt(event.target.value)}
+                  placeholder="Describe the theme: mood, colors, industry, style references, and any constraints."
+                  className="mt-2 min-h-[90px] w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                />
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] text-white/50">
+                    Uses the OpenAI worker with model <code className="font-mono">gpt-5.2</code>.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGenerateThemeWithAi}
+                    disabled={themeAiLoading || !themeAiPrompt.trim()}
+                    className="rounded-full border border-amber-300/40 bg-amber-400/15 px-4 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {themeAiLoading ? 'Generating...' : 'Generate theme'}
+                  </button>
+                </div>
+                {themeAiError && (
+                  <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                    {themeAiError}
+                  </div>
+                )}
+                {themeAiResult && (
+                  <div className="mt-2 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                    Created theme <code className="font-mono">{themeAiResult.themeLabel}</code> (
+                    <code className="font-mono">{themeAiResult.themeId}</code>).
+                  </div>
+                )}
+                {themeAiPageResult && (
+                  <div className="mt-2 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                    Created Theme Page html-node <code className="font-mono">{themeAiPageResult.htmlNodeId}</code> in graph{' '}
+                    <code className="font-mono">{themeAiPageResult.graphId}</code>.
+                  </div>
+                )}
+              </div>
+
               <div className="rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-3">
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-100">
                   Create Theme From URL

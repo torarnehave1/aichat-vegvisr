@@ -208,6 +208,10 @@ const HTML_IMPORT_ENDPOINT = '/api/import-html';
 const GRAPH_CLONE_HTML_NODE_ENDPOINT = '/api/graph/clone-html-node';
 const GRAPH_ATTACH_STYLES_ENDPOINT = '/api/graph/attach-styles';
 const GRAPH_DETACH_STYLES_ENDPOINT = '/api/graph/detach-styles';
+const GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT = '/api/graph/apply-theme-template';
+const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-template-bulk';
+const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
+const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -230,6 +234,220 @@ const SUPPORTED_AUDIO_MIME_TYPES = new Set([
 ]);
 
 const SUPPORTED_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.mp4', '.webm'];
+
+const THEME_CONTRACT_CLASSES = [
+  'v-page',
+  'v-container',
+  'v-section',
+  'v-grid',
+  'v-card',
+  'v-title',
+  'v-text',
+  'v-btn'
+];
+
+type ThemeTemplate = {
+  id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  swatches: string[];
+  tokens: {
+    bg: string;
+    surface: string;
+    surfaceElevated: string;
+    text: string;
+    muted: string;
+    primary: string;
+    primaryInk: string;
+    border: string;
+    radius: string;
+    shadow: string;
+  };
+};
+
+const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
+  {
+    id: 'nordic-light',
+    label: 'Nordic Light',
+    description: 'Clean and bright product style.',
+    tags: ['light', 'neutral', 'product'],
+    swatches: ['#f8fafc', '#ffffff', '#0f172a', '#475569', '#0ea5e9'],
+    tokens: {
+      bg: '#f8fafc',
+      surface: '#ffffff',
+      surfaceElevated: '#f1f5f9',
+      text: '#0f172a',
+      muted: '#475569',
+      primary: '#0ea5e9',
+      primaryInk: '#ffffff',
+      border: '#cbd5e1',
+      radius: '16px',
+      shadow: '0 20px 45px rgba(15, 23, 42, 0.08)'
+    }
+  },
+  {
+    id: 'coastal-blue',
+    label: 'Coastal Blue',
+    description: 'Calm blue palette for landing pages.',
+    tags: ['blue', 'marketing', 'light'],
+    swatches: ['#f0f9ff', '#ffffff', '#082f49', '#075985', '#0284c7'],
+    tokens: {
+      bg: '#f0f9ff',
+      surface: '#ffffff',
+      surfaceElevated: '#e0f2fe',
+      text: '#082f49',
+      muted: '#075985',
+      primary: '#0284c7',
+      primaryInk: '#f8fafc',
+      border: '#7dd3fc',
+      radius: '18px',
+      shadow: '0 18px 40px rgba(2, 132, 199, 0.18)'
+    }
+  },
+  {
+    id: 'forest-minimal',
+    label: 'Forest Minimal',
+    description: 'Natural green palette with soft contrast.',
+    tags: ['green', 'minimal', 'nature'],
+    swatches: ['#f7fee7', '#ffffff', '#14532d', '#365314', '#4d7c0f'],
+    tokens: {
+      bg: '#f7fee7',
+      surface: '#ffffff',
+      surfaceElevated: '#ecfccb',
+      text: '#14532d',
+      muted: '#365314',
+      primary: '#4d7c0f',
+      primaryInk: '#f7fee7',
+      border: '#bef264',
+      radius: '16px',
+      shadow: '0 16px 36px rgba(77, 124, 15, 0.18)'
+    }
+  },
+  {
+    id: 'sunset-coral',
+    label: 'Sunset Coral',
+    description: 'Warm and conversion-focused accent styling.',
+    tags: ['warm', 'coral', 'bold'],
+    swatches: ['#fff7ed', '#ffffff', '#7c2d12', '#9a3412', '#ea580c'],
+    tokens: {
+      bg: '#fff7ed',
+      surface: '#ffffff',
+      surfaceElevated: '#ffedd5',
+      text: '#7c2d12',
+      muted: '#9a3412',
+      primary: '#ea580c',
+      primaryInk: '#fff7ed',
+      border: '#fdba74',
+      radius: '18px',
+      shadow: '0 20px 42px rgba(234, 88, 12, 0.2)'
+    }
+  },
+  {
+    id: 'midnight-contrast',
+    label: 'Midnight Contrast',
+    description: 'Dark UI with strong CTA contrast.',
+    tags: ['dark', 'saas', 'contrast'],
+    swatches: ['#020617', '#0f172a', '#e2e8f0', '#94a3b8', '#22d3ee'],
+    tokens: {
+      bg: '#020617',
+      surface: '#0f172a',
+      surfaceElevated: '#1e293b',
+      text: '#e2e8f0',
+      muted: '#94a3b8',
+      primary: '#22d3ee',
+      primaryInk: '#0f172a',
+      border: '#334155',
+      radius: '16px',
+      shadow: '0 22px 50px rgba(15, 23, 42, 0.4)'
+    }
+  }
+];
+
+const normalizeThemeSearch = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[_\s]+/g, '-');
+
+const resolveThemeTemplateInCatalog = (value: string, catalog: ThemeTemplate[]): ThemeTemplate | null => {
+  const needle = normalizeThemeSearch(value);
+  if (!needle) return null;
+  for (const theme of catalog) {
+    if (theme.id === needle) return theme;
+    if (normalizeThemeSearch(theme.label) === needle) return theme;
+    if (theme.tags.some((tag) => normalizeThemeSearch(tag) === needle)) return theme;
+  }
+  const loose = catalog.find((theme) =>
+    [theme.id, theme.label, ...theme.tags]
+      .map((item) => normalizeThemeSearch(item))
+      .some((candidate) => candidate.includes(needle))
+  );
+  return loose || null;
+};
+
+const buildThemeTemplateCss = (theme: ThemeTemplate) => {
+  const t = theme.tokens;
+  return `:root, html[data-v-theme="${theme.id}"] {
+  --v-bg: ${t.bg};
+  --v-surface: ${t.surface};
+  --v-surface-elevated: ${t.surfaceElevated};
+  --v-text: ${t.text};
+  --v-muted: ${t.muted};
+  --v-primary: ${t.primary};
+  --v-primary-ink: ${t.primaryInk};
+  --v-border: ${t.border};
+  --v-radius: ${t.radius};
+  --v-shadow: ${t.shadow};
+}
+html[data-v-theme="${theme.id}"], html[data-v-theme="${theme.id}"] body {
+  background: var(--v-bg);
+  color: var(--v-text);
+}
+.v-page { min-height: 100vh; background: var(--v-bg); color: var(--v-text); }
+.v-container { width: min(1120px, 92vw); margin: 0 auto; }
+.v-section { padding: clamp(20px, 4vw, 36px) 0; }
+.v-grid { display: grid; gap: 12px; }
+.v-card { background: var(--v-surface); border: 1px solid var(--v-border); border-radius: var(--v-radius); box-shadow: var(--v-shadow); padding: 14px; }
+.v-title { color: var(--v-text); line-height: 1.2; }
+.v-text { color: var(--v-muted); line-height: 1.5; }
+.v-btn { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--v-border); border-radius: calc(var(--v-radius) - 6px); background: var(--v-primary); color: var(--v-primary-ink); padding: 8px 12px; text-decoration: none; font-weight: 600; }`;
+};
+
+const buildThemePreviewHtml = (theme: ThemeTemplate) => `<!DOCTYPE html>
+<html data-v-theme="${theme.id}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      html, body { margin: 0; padding: 0; font-family: Inter, -apple-system, "Segoe UI", sans-serif; }
+      ${buildThemeTemplateCss(theme)}
+      .preview-root { padding: 8px; }
+      .preview-grid { grid-template-columns: 1fr 1fr; }
+      .preview-title { font-size: 13px; margin: 0 0 4px; }
+      .preview-text { font-size: 11px; margin: 0 0 8px; }
+      .preview-btn { font-size: 10px; padding: 6px 10px; }
+    </style>
+  </head>
+  <body class="v-page">
+    <div class="preview-root v-container">
+      <section class="v-section">
+        <div class="v-grid preview-grid">
+          <article class="v-card">
+            <h3 class="v-title preview-title">Theme Preview</h3>
+            <p class="v-text preview-text">Contract classes render here.</p>
+            <a class="v-btn preview-btn" href="#">Button</a>
+          </article>
+          <article class="v-card">
+            <h3 class="v-title preview-title">${theme.label}</h3>
+            <p class="v-text preview-text">${theme.tags.join(' · ')}</p>
+            <a class="v-btn preview-btn" href="#">Action</a>
+          </article>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>`;
 
 type GrokChatPanelProps = {
   initialUserId?: string;
@@ -304,6 +522,39 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     htmlBytes?: number;
     payloadBytes?: number;
   } | null>(null);
+  const [themeStudioOpen, setThemeStudioOpen] = useState(false);
+  const [themeSearch, setThemeSearch] = useState('');
+  const [customThemeTemplates, setCustomThemeTemplates] = useState<ThemeTemplate[]>([]);
+  const [themeSelectedId, setThemeSelectedId] = useState(BUILT_IN_THEME_TEMPLATES[0].id);
+  const [themeSourceUrl, setThemeSourceUrl] = useState('');
+  const [themeSourceLabel, setThemeSourceLabel] = useState('');
+  const [themeCreateLoading, setThemeCreateLoading] = useState(false);
+  const [themeCreateError, setThemeCreateError] = useState('');
+  const [themeCreateResult, setThemeCreateResult] = useState<{
+    themeId: string;
+    themeLabel: string;
+    hostname: string;
+  } | null>(null);
+  const [themeTargetGraphId, setThemeTargetGraphId] = useState(GRAPH_IDENTIFIER);
+  const [themeTargetHtmlNodeId, setThemeTargetHtmlNodeId] = useState('');
+  const [themeCssNodeId, setThemeCssNodeId] = useState('');
+  const [themeApplyLoading, setThemeApplyLoading] = useState(false);
+  const [themeApplyError, setThemeApplyError] = useState('');
+  const [themeApplyResult, setThemeApplyResult] = useState<{
+    graphId: string;
+    htmlNodeId: string;
+    cssNodeId: string;
+    themeId: string;
+    themeLabel: string;
+    appliedHtmlNodeCount?: number;
+  } | null>(null);
+  const [themeValidationLoading, setThemeValidationLoading] = useState(false);
+  const [themeValidationResult, setThemeValidationResult] = useState<{
+    valid: boolean;
+    missingRequiredClasses: string[];
+    missingOptionalClasses: string[];
+    presentClasses: string[];
+  } | null>(null);
   const lastInitializedSessionKey = useRef<string | null>(null);
   const sessionInitPromise = useRef<Promise<void> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -313,6 +564,31 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     if (!canPersistHistory || !userId.trim()) return null;
     return `grok-chat-session:${userId.trim()}:${GRAPH_IDENTIFIER}`;
   }, [canPersistHistory, userId]);
+
+  const allThemeTemplates = useMemo(() => {
+    const byId = new Map<string, ThemeTemplate>();
+    [...customThemeTemplates, ...BUILT_IN_THEME_TEMPLATES].forEach((theme) => {
+      byId.set(theme.id, theme);
+    });
+    return [...byId.values()];
+  }, [customThemeTemplates]);
+
+  const filteredThemeTemplates = useMemo(() => {
+    const needle = normalizeThemeSearch(themeSearch);
+    if (!needle) return allThemeTemplates;
+    return allThemeTemplates.filter((theme) =>
+      [theme.id, theme.label, ...theme.tags]
+        .map((item) => normalizeThemeSearch(item))
+        .some((candidate) => candidate.includes(needle))
+    );
+  }, [themeSearch, allThemeTemplates]);
+
+  const selectedThemeTemplate = useMemo(
+    () =>
+      allThemeTemplates.find((theme) => theme.id === themeSelectedId) ||
+      BUILT_IN_THEME_TEMPLATES[0],
+    [themeSelectedId, allThemeTemplates]
+  );
 
   useEffect(() => {
     if (!providerSupportsImages) {
@@ -353,8 +629,10 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   };
 
   const resolveGraphId = () => {
-    const candidate = htmlImportTargetGraphId.trim();
-    return candidate || GRAPH_IDENTIFIER;
+    const themeGraph = themeTargetGraphId.trim();
+    if (themeGraph) return themeGraph;
+    const importGraph = htmlImportTargetGraphId.trim();
+    return importGraph || GRAPH_IDENTIFIER;
   };
 
   const postDomainWorkerJson = async (
@@ -395,6 +673,195 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     if (!text) return { handled: false };
 
     const graphId = resolveGraphId();
+
+    if (/^(?:list|show)\s+(?:theme|themes|template themes|templates)\b/i.test(text)) {
+      const summary = allThemeTemplates.map((theme) => `${theme.id} (${theme.label})`).join(', ');
+      return {
+        handled: true,
+        response: `Available theme templates: ${summary}. Example: "Apply theme coastal-blue to html node <htmlNodeId>".`
+      };
+    }
+
+    if (/theme\s+(?:contract|classes|class set)/i.test(text)) {
+      return {
+        handled: true,
+        response: `Theme contract classes: ${THEME_CONTRACT_CLASSES.join(', ')}. Use these in AI-generated HTML for consistent styling.`
+      };
+    }
+
+    const createThemeFromUrlCmd =
+      text.match(/create\s+(?:a\s+)?theme\s+from\s+url\s+(https?:\/\/[^\s]+)(?:\s+label\s*[:=]\s*["']([^"']+)["'])?/i) ||
+      text.match(/generate\s+theme\s+from\s+(https?:\/\/[^\s]+)/i);
+    if (createThemeFromUrlCmd) {
+      const sourceUrl = createThemeFromUrlCmd[1];
+      const customLabel = createThemeFromUrlCmd[2] || '';
+      const result = await postDomainWorkerJson(THEME_CREATE_FROM_URL_ENDPOINT, {
+        url: sourceUrl,
+        label: customLabel || undefined
+      });
+      const themeRaw = result?.theme as ThemeTemplate | undefined;
+      if (!themeRaw || !themeRaw.id || !themeRaw.label) {
+        return {
+          handled: true,
+          response: 'Theme generation completed but returned invalid data.'
+        };
+      }
+      setCustomThemeTemplates((prev) => {
+        const next = prev.filter((item) => item.id !== themeRaw.id);
+        return [themeRaw, ...next];
+      });
+      setThemeSelectedId(themeRaw.id);
+      setThemeCreateResult({
+        themeId: themeRaw.id,
+        themeLabel: themeRaw.label,
+        hostname: String((result?.source as { hostname?: string } | undefined)?.hostname || '')
+      });
+      return {
+        handled: true,
+        response: `Created custom theme "${themeRaw.label}" (${themeRaw.id}) from ${sourceUrl}.`
+      };
+    }
+
+    const bulkApplyThemeCmd =
+      text.match(/(?:apply|use)\s+theme\s+(.+?)\s+(?:to|for)\s+all\s+html(?:[-\s]?nodes?)/i) ||
+      text.match(/theme\s+(.+?)\s+all\s+html(?:[-\s]?nodes?)/i);
+    if (bulkApplyThemeCmd) {
+      const themeNeedle = bulkApplyThemeCmd[1].trim().replace(/^["'`]|["'`]$/g, '');
+      const cssMatch = text.match(/(?:using|with)\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i);
+      const cssNodeId = cssMatch ? cssMatch[1] : '';
+      const theme = resolveThemeTemplateInCatalog(themeNeedle, allThemeTemplates);
+      if (!theme) {
+        const available = allThemeTemplates.map((item) => item.id).join(', ');
+        return {
+          handled: true,
+          response: `Unknown theme "${themeNeedle}". Available themes: ${available}.`
+        };
+      }
+      const isBuiltInTheme = BUILT_IN_THEME_TEMPLATES.some((item) => item.id === theme.id);
+      const result = await postDomainWorkerJson(GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT, {
+        graphId,
+        themeId: theme.id,
+        customTheme: isBuiltInTheme ? undefined : theme,
+        cssNodeId: cssNodeId || undefined,
+        replaceExisting: true,
+        userRole: 'Superadmin',
+        userEmail: userEmail.trim() || undefined,
+        appliedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+      });
+      const htmlNodeCount = Number(result?.htmlNodeCount || 0);
+      const savedCssNodeId = String(result?.cssNodeId || cssNodeId || '').trim();
+      setThemeSelectedId(theme.id);
+      setThemeTargetGraphId(graphId);
+      setThemeCssNodeId(savedCssNodeId);
+      setThemeApplyResult({
+        graphId,
+        htmlNodeId: 'all-html-nodes',
+        cssNodeId: savedCssNodeId,
+        themeId: theme.id,
+        themeLabel: theme.label,
+        appliedHtmlNodeCount: htmlNodeCount
+      });
+      return {
+        handled: true,
+        response: `Applied theme "${theme.label}" to ${htmlNodeCount} html-node(s) in graph \`${graphId}\` using css-node \`${savedCssNodeId || 'unknown'}\`.`
+      };
+    }
+
+    const validateThemeCmd =
+      text.match(/validate\s+(?:theme\s+)?contract\s+(?:for\s+)?html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i) ||
+      text.match(/check\s+theme\s+contract\s+(?:for\s+)?html(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i);
+    if (validateThemeCmd) {
+      const htmlNodeId = validateThemeCmd[1];
+      const result = await postDomainWorkerJson(GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT, {
+        graphId,
+        htmlNodeId
+      });
+      const coverage = (result?.coverage as {
+        valid?: boolean;
+        presentClasses?: string[];
+        missingRequiredClasses?: string[];
+        missingOptionalClasses?: string[];
+      }) || { valid: false, presentClasses: [], missingRequiredClasses: [], missingOptionalClasses: [] };
+
+      setThemeTargetGraphId(graphId);
+      setThemeTargetHtmlNodeId(htmlNodeId);
+      setThemeValidationResult({
+        valid: Boolean(coverage.valid),
+        presentClasses: Array.isArray(coverage.presentClasses) ? coverage.presentClasses : [],
+        missingRequiredClasses: Array.isArray(coverage.missingRequiredClasses) ? coverage.missingRequiredClasses : [],
+        missingOptionalClasses: Array.isArray(coverage.missingOptionalClasses) ? coverage.missingOptionalClasses : []
+      });
+
+      return {
+        handled: true,
+        response: coverage.valid
+          ? `Theme contract valid for html-node \`${htmlNodeId}\`. Missing optional classes: ${(coverage.missingOptionalClasses || []).join(', ') || 'none'}.`
+          : `Theme contract missing required classes for html-node \`${htmlNodeId}\`: ${(coverage.missingRequiredClasses || []).join(', ')}.`
+      };
+    }
+
+    const applyThemeCmd =
+      text.match(/(?:apply|use)\s+theme\s+(.+?)\s+(?:to|for)\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)(?:\s|$)/i) ||
+      text.match(/theme\s+(.+?)\s+html(?:\s+node)?\s*([a-zA-Z0-9_-]+)(?:\s|$)/i);
+    if (applyThemeCmd) {
+      const themeNeedle = applyThemeCmd[1].trim().replace(/^["'`]|["'`]$/g, '');
+      const htmlNodeId = applyThemeCmd[2];
+      const cssMatch = text.match(/(?:using|with)\s+css(?:\s+node)?\s*([a-zA-Z0-9_-]+)/i);
+      const cssNodeId = cssMatch ? cssMatch[1] : '';
+      const theme = resolveThemeTemplateInCatalog(themeNeedle, allThemeTemplates);
+      if (!theme) {
+        const available = allThemeTemplates.map((item) => item.id).join(', ');
+        return {
+          handled: true,
+          response: `Unknown theme "${themeNeedle}". Available themes: ${available}.`
+        };
+      }
+      const isBuiltInTheme = BUILT_IN_THEME_TEMPLATES.some((item) => item.id === theme.id);
+
+      const result = await postDomainWorkerJson(GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT, {
+        graphId,
+        htmlNodeId,
+        themeId: theme.id,
+        customTheme: isBuiltInTheme ? undefined : theme,
+        cssNodeId: cssNodeId || undefined,
+        replaceExisting: true,
+        userRole: 'Superadmin',
+        userEmail: userEmail.trim() || undefined,
+        appliedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+      });
+
+      const savedCssNodeId = String(result?.cssNodeId || cssNodeId || '').trim();
+      const coverage = (result?.themeContractCoverage as {
+        valid?: boolean;
+        presentClasses?: string[];
+        missingRequiredClasses?: string[];
+        missingOptionalClasses?: string[];
+      }) || null;
+      setThemeSelectedId(theme.id);
+      setThemeTargetGraphId(graphId);
+      setThemeTargetHtmlNodeId(htmlNodeId);
+      setThemeCssNodeId(savedCssNodeId);
+      setThemeApplyResult({
+        graphId,
+        htmlNodeId,
+        cssNodeId: savedCssNodeId,
+        themeId: theme.id,
+        themeLabel: theme.label
+      });
+      if (coverage) {
+        setThemeValidationResult({
+          valid: Boolean(coverage.valid),
+          presentClasses: Array.isArray(coverage.presentClasses) ? coverage.presentClasses : [],
+          missingRequiredClasses: Array.isArray(coverage.missingRequiredClasses) ? coverage.missingRequiredClasses : [],
+          missingOptionalClasses: Array.isArray(coverage.missingOptionalClasses) ? coverage.missingOptionalClasses : []
+        });
+      }
+
+      return {
+        handled: true,
+        response: `Applied theme "${theme.label}" to html-node \`${htmlNodeId}\` in graph \`${graphId}\` using css-node \`${savedCssNodeId || 'unknown'}\`.`
+      };
+    }
 
     const createCmd =
       text.match(
@@ -474,6 +941,238 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     setHtmlImportStats(null);
   };
 
+  const resetThemeStudioState = () => {
+    setThemeApplyError('');
+    setThemeApplyResult(null);
+    setThemeValidationResult(null);
+    setThemeCreateError('');
+    setThemeCreateResult(null);
+  };
+
+  const buildThemePrompt = (theme: ThemeTemplate) =>
+    `Create standalone semantic HTML using Vegvisr theme contract v1. Use only these classes: ${THEME_CONTRACT_CLASSES.join(
+      ', '
+    )}. Keep custom CSS minimal and rely on the theme CSS node. Use data-v-theme="${theme.id}" on the html element.`;
+
+  const handleCopyThemePrompt = async () => {
+    try {
+      const prompt = buildThemePrompt(selectedThemeTemplate);
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error('Clipboard API not available');
+      }
+      await navigator.clipboard.writeText(prompt);
+      showToast('Theme prompt copied.');
+    } catch {
+      showToast('Unable to copy prompt on this browser.');
+    }
+  };
+
+  const handleCreateThemeFromUrl = async () => {
+    const urlValue = themeSourceUrl.trim();
+    const labelValue = themeSourceLabel.trim();
+    resetThemeStudioState();
+
+    if (!urlValue) {
+      setThemeCreateError('Please enter a source URL.');
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(urlValue);
+    } catch {
+      setThemeCreateError('Please enter a valid URL.');
+      return;
+    }
+    if (!/^https?:$/i.test(parsedUrl.protocol)) {
+      setThemeCreateError('Only http(s) URLs are supported.');
+      return;
+    }
+
+    setThemeCreateLoading(true);
+    try {
+      const result = await postDomainWorkerJson(THEME_CREATE_FROM_URL_ENDPOINT, {
+        url: parsedUrl.toString(),
+        label: labelValue || undefined
+      });
+      const themeRaw = result?.theme as ThemeTemplate | undefined;
+      if (!themeRaw || !themeRaw.id || !themeRaw.label || !themeRaw.tokens) {
+        throw new Error('Theme generation succeeded but returned invalid theme data.');
+      }
+
+      setCustomThemeTemplates((prev) => {
+        const next = prev.filter((item) => item.id !== themeRaw.id);
+        return [themeRaw, ...next];
+      });
+      setThemeSelectedId(themeRaw.id);
+      setThemeCreateResult({
+        themeId: themeRaw.id,
+        themeLabel: themeRaw.label,
+        hostname: String((result?.source as { hostname?: string } | undefined)?.hostname || '')
+      });
+      showToast(`Created theme "${themeRaw.label}".`);
+    } catch (error) {
+      setThemeCreateError(error instanceof Error ? error.message : 'Theme creation failed.');
+    } finally {
+      setThemeCreateLoading(false);
+    }
+  };
+
+  const handleApplyThemeTemplate = async () => {
+    const graphId = resolveGraphId();
+    const htmlNodeId = themeTargetHtmlNodeId.trim();
+    const cssNodeId = themeCssNodeId.trim();
+    const theme = allThemeTemplates.find((item) => item.id === themeSelectedId);
+
+    resetThemeStudioState();
+
+    if (!graphId) {
+      setThemeApplyError('Graph ID is required.');
+      return;
+    }
+    if (!htmlNodeId) {
+      setThemeApplyError('HTML node ID is required.');
+      return;
+    }
+    if (!theme) {
+      setThemeApplyError('Please select a theme template.');
+      return;
+    }
+
+    setThemeApplyLoading(true);
+    try {
+      const isBuiltInTheme = BUILT_IN_THEME_TEMPLATES.some((item) => item.id === theme.id);
+      const result = await postDomainWorkerJson(GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT, {
+        graphId,
+        htmlNodeId,
+        themeId: theme.id,
+        customTheme: isBuiltInTheme ? undefined : theme,
+        cssNodeId: cssNodeId || undefined,
+        replaceExisting: true,
+        userRole: 'Superadmin',
+        userEmail: userEmail.trim() || undefined,
+        appliedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+      });
+
+      const savedCssNodeId = String(result?.cssNodeId || cssNodeId || '').trim();
+      const coverage = (result?.themeContractCoverage as {
+        valid?: boolean;
+        presentClasses?: string[];
+        missingRequiredClasses?: string[];
+        missingOptionalClasses?: string[];
+      }) || null;
+      setThemeCssNodeId(savedCssNodeId);
+      setThemeApplyResult({
+        graphId,
+        htmlNodeId,
+        cssNodeId: savedCssNodeId,
+        themeId: theme.id,
+        themeLabel: theme.label
+      });
+      if (coverage) {
+        setThemeValidationResult({
+          valid: Boolean(coverage.valid),
+          presentClasses: Array.isArray(coverage.presentClasses) ? coverage.presentClasses : [],
+          missingRequiredClasses: Array.isArray(coverage.missingRequiredClasses) ? coverage.missingRequiredClasses : [],
+          missingOptionalClasses: Array.isArray(coverage.missingOptionalClasses) ? coverage.missingOptionalClasses : []
+        });
+      }
+      showToast(`Applied ${theme.label} theme.`);
+    } catch (error) {
+      setThemeApplyError(error instanceof Error ? error.message : 'Theme apply failed.');
+    } finally {
+      setThemeApplyLoading(false);
+    }
+  };
+
+  const handleApplyThemeTemplateToAllNodes = async () => {
+    const graphId = resolveGraphId();
+    const cssNodeId = themeCssNodeId.trim();
+    const theme = allThemeTemplates.find((item) => item.id === themeSelectedId);
+    resetThemeStudioState();
+
+    if (!graphId) {
+      setThemeApplyError('Graph ID is required.');
+      return;
+    }
+    if (!theme) {
+      setThemeApplyError('Please select a theme template.');
+      return;
+    }
+
+    setThemeApplyLoading(true);
+    try {
+      const isBuiltInTheme = BUILT_IN_THEME_TEMPLATES.some((item) => item.id === theme.id);
+      const result = await postDomainWorkerJson(GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT, {
+        graphId,
+        themeId: theme.id,
+        customTheme: isBuiltInTheme ? undefined : theme,
+        cssNodeId: cssNodeId || undefined,
+        replaceExisting: true,
+        userRole: 'Superadmin',
+        userEmail: userEmail.trim() || undefined,
+        appliedBy: userEmail.trim() || userId.trim() || 'aichat-vegvisr'
+      });
+      const savedCssNodeId = String(result?.cssNodeId || cssNodeId || '').trim();
+      const htmlNodeCount = Number(result?.htmlNodeCount || 0);
+      setThemeCssNodeId(savedCssNodeId);
+      setThemeApplyResult({
+        graphId,
+        htmlNodeId: 'all-html-nodes',
+        cssNodeId: savedCssNodeId,
+        themeId: theme.id,
+        themeLabel: theme.label,
+        appliedHtmlNodeCount: htmlNodeCount
+      });
+      showToast(`Applied theme to ${htmlNodeCount} html node(s).`);
+    } catch (error) {
+      setThemeApplyError(error instanceof Error ? error.message : 'Bulk theme apply failed.');
+    } finally {
+      setThemeApplyLoading(false);
+    }
+  };
+
+  const handleValidateThemeContract = async () => {
+    const graphId = resolveGraphId();
+    const htmlNodeId = themeTargetHtmlNodeId.trim();
+    resetThemeStudioState();
+
+    if (!graphId) {
+      setThemeApplyError('Graph ID is required.');
+      return;
+    }
+    if (!htmlNodeId) {
+      setThemeApplyError('HTML node ID is required.');
+      return;
+    }
+
+    setThemeValidationLoading(true);
+    try {
+      const result = await postDomainWorkerJson(GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT, {
+        graphId,
+        htmlNodeId
+      });
+      const coverage = (result?.coverage as {
+        valid?: boolean;
+        presentClasses?: string[];
+        missingRequiredClasses?: string[];
+        missingOptionalClasses?: string[];
+      }) || { valid: false, presentClasses: [], missingRequiredClasses: [], missingOptionalClasses: [] };
+
+      setThemeValidationResult({
+        valid: Boolean(coverage.valid),
+        presentClasses: Array.isArray(coverage.presentClasses) ? coverage.presentClasses : [],
+        missingRequiredClasses: Array.isArray(coverage.missingRequiredClasses) ? coverage.missingRequiredClasses : [],
+        missingOptionalClasses: Array.isArray(coverage.missingOptionalClasses) ? coverage.missingOptionalClasses : []
+      });
+      showToast(coverage.valid ? 'Theme contract valid.' : 'Theme contract has missing required classes.');
+    } catch (error) {
+      setThemeApplyError(error instanceof Error ? error.message : 'Theme contract validation failed.');
+    } finally {
+      setThemeValidationLoading(false);
+    }
+  };
+
   const handleImportHtmlTemplate = async () => {
     const url = htmlImportUrl.trim();
     const title = htmlImportTitle.trim();
@@ -525,6 +1224,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       }
 
       setHtmlImportGraphId(graphId);
+      if (htmlImportMode === 'new') {
+        setThemeTargetGraphId(graphId);
+      } else if (htmlImportMode === 'current' && targetGraphId) {
+        setThemeTargetGraphId(targetGraphId);
+      }
       const stats =
         result?.stats && typeof result.stats === 'object'
           ? (result.stats as { cssBytes?: number; htmlBytes?: number; payloadBytes?: number })
@@ -2257,6 +2961,278 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                       {t('chat.htmlImportStats')}: CSS {Math.round((htmlImportStats.cssBytes || 0) / 1024)} KB, HTML {Math.round((htmlImportStats.htmlBytes || 0) / 1024)} KB, Payload {Math.round((htmlImportStats.payloadBytes || 0) / 1024)} KB
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-white/70">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/70">
+                Theme Studio
+              </div>
+              <p className="mt-1 text-xs text-white/50">
+                Select a UI theme, then apply it to an HTML node with one click.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setThemeStudioOpen((prev) => !prev);
+                resetThemeStudioState();
+              }}
+              className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white/70 hover:bg-white/20"
+            >
+              {themeStudioOpen ? 'Hide theme studio' : 'Show theme studio'}
+            </button>
+          </div>
+
+          {themeStudioOpen && (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-sky-300/20 bg-sky-400/10 px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-100">
+                  Create Theme From URL
+                </div>
+                <p className="mt-1 text-xs text-sky-100/80">
+                  Paste a website URL. Vegvisr will generate a new theme from that design style.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_auto]">
+                  <input
+                    value={themeSourceUrl}
+                    onChange={(event) => setThemeSourceUrl(event.target.value)}
+                    type="url"
+                    placeholder="https://example.com/"
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                  />
+                  <input
+                    value={themeSourceLabel}
+                    onChange={(event) => setThemeSourceLabel(event.target.value)}
+                    type="text"
+                    placeholder="Theme name (optional)"
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateThemeFromUrl}
+                    disabled={themeCreateLoading || !themeSourceUrl.trim()}
+                    className="rounded-full border border-sky-300/40 bg-sky-400/15 px-4 py-1.5 text-xs font-semibold text-sky-100 hover:bg-sky-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {themeCreateLoading ? 'Creating...' : 'Create theme'}
+                  </button>
+                </div>
+                {themeCreateError && (
+                  <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                    {themeCreateError}
+                  </div>
+                )}
+                {themeCreateResult && (
+                  <div className="mt-2 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                    Created theme <code className="font-mono">{themeCreateResult.themeLabel}</code> (
+                    <code className="font-mono">{themeCreateResult.themeId}</code>)
+                    {themeCreateResult.hostname ? ` from ${themeCreateResult.hostname}` : ''}.
+                  </div>
+                )}
+              </div>
+
+              <input
+                value={themeSearch}
+                onChange={(event) => setThemeSearch(event.target.value)}
+                type="text"
+                placeholder="Search themes by name, id, or tag"
+                className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+              />
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {filteredThemeTemplates.map((theme) => {
+                  const isSelected = selectedThemeTemplate.id === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setThemeSelectedId(theme.id)}
+                      className={`rounded-xl border px-3 py-3 text-left transition ${
+                        isSelected
+                          ? 'border-emerald-300/60 bg-emerald-400/15'
+                          : 'border-white/20 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-white">{theme.label}</span>
+                        <span className="rounded-md border border-white/20 px-1.5 py-0.5 font-mono text-[10px] text-white/70">
+                          {theme.id}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-white/60">{theme.description}</p>
+                      <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-slate-900/40">
+                        <iframe
+                          title={`Theme preview ${theme.label}`}
+                          srcDoc={buildThemePreviewHtml(theme)}
+                          loading="lazy"
+                          sandbox=""
+                          className="h-24 w-full"
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {theme.swatches.map((color) => (
+                          <span
+                            key={`${theme.id}-${color}`}
+                            className="h-4 w-4 rounded-full border border-white/20"
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
+                {filteredThemeTemplates.length === 0 && (
+                  <div className="rounded-xl border border-white/20 bg-white/5 px-3 py-4 text-xs text-white/60">
+                    No theme templates match your search.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <input
+                  value={themeTargetGraphId}
+                  onChange={(event) => setThemeTargetGraphId(event.target.value)}
+                  type="text"
+                  placeholder="Graph ID (target)"
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+                <input
+                  value={themeTargetHtmlNodeId}
+                  onChange={(event) => setThemeTargetHtmlNodeId(event.target.value)}
+                  type="text"
+                  placeholder="HTML node ID (required)"
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+                <input
+                  value={themeCssNodeId}
+                  onChange={(event) => setThemeCssNodeId(event.target.value)}
+                  type="text"
+                  placeholder="CSS node ID (optional, to reuse)"
+                  className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                />
+              </div>
+
+              <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+                  AI HTML Class Contract
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {THEME_CONTRACT_CLASSES.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 font-mono text-[11px] text-amber-100"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-amber-100/80">
+                  Use these classes when asking AI to generate HTML, so any selected theme can style it consistently.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCopyThemePrompt}
+                  className="mt-2 rounded-full border border-amber-300/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-100 hover:bg-amber-400/25"
+                >
+                  Copy AI prompt for selected theme
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleValidateThemeContract}
+                  disabled={themeValidationLoading || !themeTargetHtmlNodeId.trim()}
+                  className="rounded-full border border-amber-300/40 bg-amber-400/15 px-4 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {themeValidationLoading ? 'Validating...' : 'Validate contract'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyThemeTemplateToAllNodes}
+                  disabled={themeApplyLoading || !themeTargetGraphId.trim()}
+                  className="rounded-full border border-emerald-300/40 bg-emerald-400/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {themeApplyLoading
+                    ? 'Applying theme...'
+                    : `Apply ${selectedThemeTemplate.label} to ALL HTML nodes`}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyThemeTemplate}
+                  disabled={themeApplyLoading || !themeTargetHtmlNodeId.trim()}
+                  className="rounded-full border border-emerald-300/40 bg-emerald-400/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {themeApplyLoading
+                    ? 'Applying theme...'
+                    : `Apply ${selectedThemeTemplate.label} to HTML node`}
+                </button>
+                {themeApplyResult && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      window.open(
+                        `https://www.vegvisr.org/gnew-viewer?graphId=${themeApplyResult.graphId}`,
+                        '_blank'
+                      )
+                    }
+                    className="rounded-full border border-sky-300/40 bg-sky-400/15 px-4 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-400/25"
+                  >
+                    Open graph
+                  </button>
+                )}
+              </div>
+
+              {themeApplyError && (
+                <div className="rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                  {themeApplyError}
+                </div>
+              )}
+
+              {themeValidationResult && (
+                <div
+                  className={`rounded-xl border px-3 py-2 text-xs ${
+                    themeValidationResult.valid
+                      ? 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100'
+                      : 'border-amber-300/30 bg-amber-400/10 text-amber-100'
+                  }`}
+                >
+                  <div>
+                    Contract status:{' '}
+                    <strong>{themeValidationResult.valid ? 'Valid (required classes present)' : 'Missing required classes'}</strong>
+                  </div>
+                  <div className="mt-1 text-[11px]">
+                    Missing required: {themeValidationResult.missingRequiredClasses.join(', ') || 'none'}
+                  </div>
+                  <div className="mt-1 text-[11px]">
+                    Missing optional: {themeValidationResult.missingOptionalClasses.join(', ') || 'none'}
+                  </div>
+                </div>
+              )}
+
+              {themeApplyResult && (
+                <div className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                  {themeApplyResult.appliedHtmlNodeCount ? (
+                    <div>
+                      Applied <strong>{themeApplyResult.themeLabel}</strong> to{' '}
+                      <strong>{themeApplyResult.appliedHtmlNodeCount}</strong> html node(s) in graph{' '}
+                      <code className="font-mono">{themeApplyResult.graphId}</code>.
+                    </div>
+                  ) : (
+                    <div>
+                      Applied <strong>{themeApplyResult.themeLabel}</strong> to html-node{' '}
+                      <code className="font-mono">{themeApplyResult.htmlNodeId}</code> in graph{' '}
+                      <code className="font-mono">{themeApplyResult.graphId}</code>.
+                    </div>
+                  )}
+                  <div className="mt-1 text-[11px] text-emerald-200/80">
+                    CSS node in use: <code className="font-mono">{themeApplyResult.cssNodeId || 'created automatically'}</code>
+                  </div>
                 </div>
               )}
             </div>

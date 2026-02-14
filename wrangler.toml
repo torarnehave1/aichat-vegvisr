@@ -9,3 +9,7 @@ service = "auth-worker"
 [[services]]
 binding = "DOMAIN_WORKER"
 service = "test-domain-worker"
+
+[[kv_namespaces]]
+binding = "THEME_STUDIO_KV"
+id = "1e3f20b8ed40453dbfa1f771012c99f2"

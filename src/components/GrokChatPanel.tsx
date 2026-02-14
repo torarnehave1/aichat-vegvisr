@@ -212,6 +212,7 @@ const GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT = '/api/graph/apply-theme-template';
 const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-template-bulk';
 const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
+const THEME_CUSTOM_ENDPOINT = '/api/theme/custom';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
 const CHUNK_DURATION_SECONDS = 120;
@@ -246,6 +247,8 @@ const THEME_CONTRACT_CLASSES = [
   'v-btn'
 ];
 
+const CUSTOM_THEME_STORAGE_KEY_PREFIX = 'aichat-vegvisr:theme-studio:custom-themes:v1';
+
 type ThemeTemplate = {
   id: string;
   label: string;
@@ -264,7 +267,16 @@ type ThemeTemplate = {
     radius: string;
     shadow: string;
   };
+  ownerUserId?: string;
+  ownerEmail?: string | null;
+  visibility?: 'shared' | 'private';
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
+
+type ThemeFilterScope = 'all' | 'mine' | 'shared';
+type ThemeSortMode = 'newest' | 'most-used' | 'mine-first';
+type SettingsTab = 'assistant' | 'import' | 'theme';
 
 const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
   {
@@ -486,6 +498,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('assistant');
   const [imageLoadStates, setImageLoadStates] = useState<Record<string, boolean>>({});
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
@@ -555,6 +568,17 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     missingOptionalClasses: string[];
     presentClasses: string[];
   } | null>(null);
+  const [themeFilterScope, setThemeFilterScope] = useState<ThemeFilterScope>('all');
+  const [themeSortMode, setThemeSortMode] = useState<ThemeSortMode>('newest');
+  const [themeUsageCounts, setThemeUsageCounts] = useState<Record<string, number>>({});
+  const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
+  const [editingThemeLabel, setEditingThemeLabel] = useState('');
+  const [editingThemeDescription, setEditingThemeDescription] = useState('');
+  const [editingThemeTags, setEditingThemeTags] = useState('');
+  const [editingThemeVisibility, setEditingThemeVisibility] = useState<'shared' | 'private'>('shared');
+  const [editingThemeSaving, setEditingThemeSaving] = useState(false);
+  const [editingThemeError, setEditingThemeError] = useState('');
+  const [customThemesLoadedFromLocal, setCustomThemesLoadedFromLocal] = useState(false);
   const lastInitializedSessionKey = useRef<string | null>(null);
   const sessionInitPromise = useRef<Promise<void> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -565,6 +589,26 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     return `grok-chat-session:${userId.trim()}:${GRAPH_IDENTIFIER}`;
   }, [canPersistHistory, userId]);
 
+  const customThemeStorageKey = useMemo(() => {
+    const owner = userId.trim() || initialEmail?.trim() || 'anon';
+    return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:${owner}`;
+  }, [userId, initialEmail]);
+
+  const themeUsageStorageKey = useMemo(() => {
+    const owner = userId.trim() || initialEmail?.trim() || 'anon';
+    return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:usage:v1:${owner}`;
+  }, [userId, initialEmail]);
+
+  const localToServerMigrationKey = useMemo(() => {
+    const owner = userId.trim() || initialEmail?.trim() || 'anon';
+    return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:migrated:v1:${owner}`;
+  }, [userId, initialEmail]);
+
+  const builtInThemeIds = useMemo(
+    () => new Set(BUILT_IN_THEME_TEMPLATES.map((theme) => theme.id)),
+    []
+  );
+
   const allThemeTemplates = useMemo(() => {
     const byId = new Map<string, ThemeTemplate>();
     [...customThemeTemplates, ...BUILT_IN_THEME_TEMPLATES].forEach((theme) => {
@@ -574,14 +618,62 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   }, [customThemeTemplates]);
 
   const filteredThemeTemplates = useMemo(() => {
+    const trimmedUserId = userId.trim();
+    let scopedThemes = allThemeTemplates;
+    if (themeFilterScope === 'mine') {
+      scopedThemes = allThemeTemplates.filter((theme) => {
+        if (builtInThemeIds.has(theme.id)) return false;
+        if (!trimmedUserId) return !theme.ownerUserId;
+        return theme.ownerUserId ? theme.ownerUserId === trimmedUserId : true;
+      });
+    } else if (themeFilterScope === 'shared') {
+      scopedThemes = allThemeTemplates.filter((theme) => {
+        if (builtInThemeIds.has(theme.id)) return true;
+        const isOwned = Boolean(trimmedUserId && theme.ownerUserId === trimmedUserId);
+        return !isOwned && (theme.visibility || 'shared') === 'shared';
+      });
+    }
+
     const needle = normalizeThemeSearch(themeSearch);
-    if (!needle) return allThemeTemplates;
-    return allThemeTemplates.filter((theme) =>
+    if (!needle) return scopedThemes;
+    return scopedThemes.filter((theme) =>
       [theme.id, theme.label, ...theme.tags]
         .map((item) => normalizeThemeSearch(item))
         .some((candidate) => candidate.includes(needle))
     );
-  }, [themeSearch, allThemeTemplates]);
+  }, [themeSearch, allThemeTemplates, themeFilterScope, userId, builtInThemeIds]);
+
+  const sortedThemeTemplates = useMemo(() => {
+    const trimmedUserId = userId.trim();
+    const timestampValue = (theme: ThemeTemplate) => {
+      const candidate = theme.updatedAt || theme.createdAt || '';
+      const ms = candidate ? Date.parse(candidate) : NaN;
+      return Number.isFinite(ms) ? ms : 0;
+    };
+
+    const baseSorted = [...filteredThemeTemplates];
+    if (themeSortMode === 'most-used') {
+      baseSorted.sort((a, b) => {
+        const usageDelta = (themeUsageCounts[b.id] || 0) - (themeUsageCounts[a.id] || 0);
+        if (usageDelta !== 0) return usageDelta;
+        return timestampValue(b) - timestampValue(a);
+      });
+      return baseSorted;
+    }
+
+    if (themeSortMode === 'mine-first') {
+      baseSorted.sort((a, b) => {
+        const aMine = trimmedUserId && a.ownerUserId === trimmedUserId ? 1 : 0;
+        const bMine = trimmedUserId && b.ownerUserId === trimmedUserId ? 1 : 0;
+        if (aMine !== bMine) return bMine - aMine;
+        return timestampValue(b) - timestampValue(a);
+      });
+      return baseSorted;
+    }
+
+    baseSorted.sort((a, b) => timestampValue(b) - timestampValue(a));
+    return baseSorted;
+  }, [filteredThemeTemplates, themeSortMode, themeUsageCounts, userId]);
 
   const selectedThemeTemplate = useMemo(
     () =>
@@ -591,10 +683,145 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   );
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(customThemeStorageKey);
+      if (!raw) {
+        setCustomThemeTemplates([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        setCustomThemeTemplates([]);
+        return;
+      }
+      const validThemes = parsed.filter((item): item is ThemeTemplate => {
+        if (!item || typeof item !== 'object') return false;
+        const theme = item as Partial<ThemeTemplate>;
+        return Boolean(
+          typeof theme.id === 'string' &&
+            typeof theme.label === 'string' &&
+            typeof theme.description === 'string' &&
+            Array.isArray(theme.tags) &&
+            Array.isArray(theme.swatches) &&
+            theme.tokens &&
+            typeof theme.tokens === 'object'
+        );
+      });
+      setCustomThemeTemplates(validThemes.slice(0, 100));
+    } catch {
+      setCustomThemeTemplates([]);
+    } finally {
+      setCustomThemesLoadedFromLocal(true);
+    }
+  }, [customThemeStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(customThemeStorageKey, JSON.stringify(customThemeTemplates));
+    } catch {
+      // Ignore localStorage write errors (quota/private mode)
+    }
+  }, [customThemeTemplates, customThemeStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(themeUsageStorageKey);
+      if (!raw) {
+        setThemeUsageCounts({});
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        setThemeUsageCounts({});
+        return;
+      }
+      const normalized = Object.entries(parsed as Record<string, unknown>).reduce<Record<string, number>>(
+        (acc, [themeId, value]) => {
+          const count = Number(value);
+          if (themeId && Number.isFinite(count) && count > 0) {
+            acc[themeId] = Math.floor(count);
+          }
+          return acc;
+        },
+        {}
+      );
+      setThemeUsageCounts(normalized);
+    } catch {
+      setThemeUsageCounts({});
+    }
+  }, [themeUsageStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(themeUsageStorageKey, JSON.stringify(themeUsageCounts));
+    } catch {
+      // Ignore localStorage write errors
+    }
+  }, [themeUsageCounts, themeUsageStorageKey]);
+
+  useEffect(() => {
+    if (!allThemeTemplates.some((theme) => theme.id === themeSelectedId)) {
+      setThemeSelectedId(BUILT_IN_THEME_TEMPLATES[0].id);
+    }
+  }, [allThemeTemplates, themeSelectedId]);
+
+  useEffect(() => {
     if (!providerSupportsImages) {
       setUploadedImage(null);
     }
   }, [providerSupportsImages]);
+
+  useEffect(() => {
+    fetchCustomThemesFromServer();
+  }, [userId, userEmail]);
+
+  useEffect(() => {
+    if (!customThemesLoadedFromLocal) return;
+    if (!userId.trim()) return;
+    if (typeof window === 'undefined') return;
+
+    try {
+      if (localStorage.getItem(localToServerMigrationKey) === '1') return;
+    } catch {
+      // ignore localStorage read errors
+    }
+
+    const legacyThemes = customThemeTemplates.filter(
+      (theme) => !builtInThemeIds.has(theme.id) && !theme.ownerUserId
+    );
+
+    if (!legacyThemes.length) {
+      try {
+        localStorage.setItem(localToServerMigrationKey, '1');
+      } catch {
+        // ignore localStorage write errors
+      }
+      return;
+    }
+
+    (async () => {
+      for (const theme of legacyThemes) {
+        await saveCustomThemeToServer(theme, theme.visibility || 'shared');
+      }
+      try {
+        localStorage.setItem(localToServerMigrationKey, '1');
+      } catch {
+        // ignore localStorage write errors
+      }
+      fetchCustomThemesFromServer();
+      showToast(`Migrated ${legacyThemes.length} local theme(s) to shared storage.`);
+    })();
+  }, [
+    customThemesLoadedFromLocal,
+    userId,
+    customThemeTemplates,
+    builtInThemeIds,
+    localToServerMigrationKey
+  ]);
 
   useEffect(() => {
     if (initialUserId && initialUserId !== userId) {
@@ -628,11 +855,30 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     return trimmed;
   };
 
+  const incrementThemeUsage = (themeId: string) => {
+    const trimmed = themeId.trim();
+    if (!trimmed) return;
+    setThemeUsageCounts((prev) => ({
+      ...prev,
+      [trimmed]: (prev[trimmed] || 0) + 1
+    }));
+  };
+
   const resolveGraphId = () => {
     const themeGraph = themeTargetGraphId.trim();
     if (themeGraph) return themeGraph;
     const importGraph = htmlImportTargetGraphId.trim();
     return importGraph || GRAPH_IDENTIFIER;
+  };
+
+  const authHeaders = () => {
+    const headers: Record<string, string> = {};
+    const trimmedUser = userId.trim();
+    const trimmedEmail = userEmail.trim();
+    if (trimmedUser) headers['x-user-id'] = trimmedUser;
+    if (trimmedEmail) headers['x-user-email'] = trimmedEmail;
+    headers['x-user-role'] = 'Superadmin';
+    return headers;
   };
 
   const postDomainWorkerJson = async (
@@ -642,7 +888,8 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...authHeaders()
       },
       body: JSON.stringify(payload)
     });
@@ -666,6 +913,175 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }
 
     return json || {};
+  };
+
+  const fetchCustomThemesFromServer = async () => {
+    if (!userId.trim()) return;
+    try {
+      const response = await fetch(THEME_CUSTOM_ENDPOINT, {
+        method: 'GET',
+        headers: { ...authHeaders() }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.success === false) {
+        throw new Error(
+          (typeof data?.message === 'string' && data.message) ||
+            `Failed to load themes (${response.status})`
+        );
+      }
+      const themes = Array.isArray(data?.themes) ? (data.themes as ThemeTemplate[]) : [];
+      if (!themes.length) return;
+      setCustomThemeTemplates((prev) => {
+        const builtInIds = new Set(BUILT_IN_THEME_TEMPLATES.map((item) => item.id));
+        const merged = new Map(prev.map((theme) => [theme.id, theme]));
+        themes.forEach((theme) => {
+          if (!theme?.id || builtInIds.has(theme.id)) return;
+          merged.set(theme.id, theme);
+        });
+        return [...merged.values()];
+      });
+    } catch (error) {
+      console.warn('Theme Studio server sync failed:', error);
+    }
+  };
+
+  const saveCustomThemeToServer = async (
+    theme: ThemeTemplate,
+    visibility: 'shared' | 'private' = 'shared'
+  ): Promise<boolean> => {
+    if (!userId.trim()) return false;
+    try {
+      const response = await fetch(THEME_CUSTOM_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders()
+        },
+        body: JSON.stringify({
+          theme,
+          visibility
+        })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Failed to save theme (${response.status})`);
+      }
+      return true;
+    } catch (error) {
+      console.warn('Theme Studio server persist failed:', error);
+      return false;
+    }
+  };
+
+  const deleteCustomThemeFromServer = async (themeId: string): Promise<boolean> => {
+    if (!userId.trim()) return false;
+    try {
+      const params = new URLSearchParams({ themeId });
+      const response = await fetch(`${THEME_CUSTOM_ENDPOINT}?${params.toString()}`, {
+        method: 'DELETE',
+        headers: { ...authHeaders() }
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Failed to delete theme (${response.status})`);
+      }
+      return true;
+    } catch (error) {
+      console.warn('Theme Studio server delete failed:', error);
+      return false;
+    }
+  };
+
+  const isCustomThemeEditable = (theme: ThemeTemplate) => {
+    if (builtInThemeIds.has(theme.id)) return false;
+    const trimmedUserId = userId.trim();
+    if (!trimmedUserId) return !theme.ownerUserId;
+    return !theme.ownerUserId || theme.ownerUserId === trimmedUserId;
+  };
+
+  const beginEditCustomTheme = (theme: ThemeTemplate) => {
+    if (!isCustomThemeEditable(theme)) return;
+    setEditingThemeId(theme.id);
+    setEditingThemeLabel(theme.label || '');
+    setEditingThemeDescription(theme.description || '');
+    setEditingThemeTags((theme.tags || []).join(', '));
+    setEditingThemeVisibility((theme.visibility || 'shared') === 'private' ? 'private' : 'shared');
+    setEditingThemeError('');
+  };
+
+  const cancelEditCustomTheme = () => {
+    setEditingThemeId(null);
+    setEditingThemeLabel('');
+    setEditingThemeDescription('');
+    setEditingThemeTags('');
+    setEditingThemeVisibility('shared');
+    setEditingThemeError('');
+  };
+
+  const handleSaveEditedTheme = async () => {
+    if (!editingThemeId) return;
+    const existingTheme = customThemeTemplates.find((theme) => theme.id === editingThemeId);
+    if (!existingTheme) {
+      setEditingThemeError('Theme no longer exists.');
+      return;
+    }
+
+    const trimmedLabel = editingThemeLabel.trim();
+    if (!trimmedLabel) {
+      setEditingThemeError('Theme name is required.');
+      return;
+    }
+
+    setEditingThemeSaving(true);
+    setEditingThemeError('');
+    try {
+      const editedTheme: ThemeTemplate = {
+        ...existingTheme,
+        label: trimmedLabel,
+        description: editingThemeDescription.trim() || existingTheme.description,
+        tags: editingThemeTags
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+        visibility: editingThemeVisibility,
+        updatedAt: new Date().toISOString()
+      };
+
+      setCustomThemeTemplates((prev) =>
+        prev.map((theme) => (theme.id === editedTheme.id ? editedTheme : theme))
+      );
+
+      const persisted = await saveCustomThemeToServer(editedTheme, editingThemeVisibility);
+      if (!persisted) {
+        setEditingThemeError('Saved locally, but failed to sync to server.');
+        return;
+      }
+
+      showToast(`Updated theme "${editedTheme.label}".`);
+      cancelEditCustomTheme();
+    } catch (error) {
+      setEditingThemeError(error instanceof Error ? error.message : 'Failed to update theme.');
+    } finally {
+      setEditingThemeSaving(false);
+    }
+  };
+
+  const handleDeleteCustomTheme = async (theme: ThemeTemplate) => {
+    if (!isCustomThemeEditable(theme)) return;
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`Delete theme "${theme.label}"?`);
+      if (!confirmed) return;
+    }
+    const removedOnServer = await deleteCustomThemeFromServer(theme.id);
+    setCustomThemeTemplates((prev) => prev.filter((item) => item.id !== theme.id));
+    if (themeSelectedId === theme.id) {
+      setThemeSelectedId(BUILT_IN_THEME_TEMPLATES[0].id);
+    }
+    showToast(
+      removedOnServer
+        ? `Deleted theme "${theme.label}".`
+        : `Deleted local theme "${theme.label}" (server delete failed).`
+    );
   };
 
   const executeLocalGraphCommand = async (prompt: string): Promise<LocalGraphCommandResult> => {
@@ -710,6 +1126,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         const next = prev.filter((item) => item.id !== themeRaw.id);
         return [themeRaw, ...next];
       });
+      saveCustomThemeToServer(themeRaw);
       setThemeSelectedId(themeRaw.id);
       setThemeCreateResult({
         themeId: themeRaw.id,
@@ -761,6 +1178,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         themeLabel: theme.label,
         appliedHtmlNodeCount: htmlNodeCount
       });
+      incrementThemeUsage(theme.id);
       return {
         handled: true,
         response: `Applied theme "${theme.label}" to ${htmlNodeCount} html-node(s) in graph \`${graphId}\` using css-node \`${savedCssNodeId || 'unknown'}\`.`
@@ -848,6 +1266,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         themeId: theme.id,
         themeLabel: theme.label
       });
+      incrementThemeUsage(theme.id);
       if (coverage) {
         setThemeValidationResult({
           valid: Boolean(coverage.valid),
@@ -1004,6 +1423,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         const next = prev.filter((item) => item.id !== themeRaw.id);
         return [themeRaw, ...next];
       });
+      saveCustomThemeToServer(themeRaw);
       setThemeSelectedId(themeRaw.id);
       setThemeCreateResult({
         themeId: themeRaw.id,
@@ -1069,6 +1489,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         themeId: theme.id,
         themeLabel: theme.label
       });
+      incrementThemeUsage(theme.id);
       if (coverage) {
         setThemeValidationResult({
           valid: Boolean(coverage.valid),
@@ -1124,6 +1545,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         themeLabel: theme.label,
         appliedHtmlNodeCount: htmlNodeCount
       });
+      incrementThemeUsage(theme.id);
       showToast(`Applied theme to ${htmlNodeCount} html node(s).`);
     } catch (error) {
       setThemeApplyError(error instanceof Error ? error.message : 'Bulk theme apply failed.');
@@ -2777,6 +3199,48 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-2 text-white/70">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <button
+              type="button"
+              onClick={() => setSettingsTab('assistant')}
+              className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                settingsTab === 'assistant'
+                  ? 'border-emerald-300/50 bg-emerald-400/20 text-emerald-100'
+                  : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+              }`}
+            >
+              Assistant
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsTab('import')}
+              className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                settingsTab === 'import'
+                  ? 'border-sky-300/50 bg-sky-400/20 text-sky-100'
+                  : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+              }`}
+            >
+              HTML Import
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab('theme');
+                setThemeStudioOpen(true);
+              }}
+              className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                settingsTab === 'theme'
+                  ? 'border-amber-300/50 bg-amber-400/20 text-amber-100'
+                  : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+              }`}
+            >
+              Theme Studio
+            </button>
+          </div>
+        </section>
+
+        {settingsTab === 'assistant' && (
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-white/70">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2843,7 +3307,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
             </div>
           )}
         </section>
+        )}
 
+        {settingsTab === 'import' && (
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-white/70">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2966,7 +3432,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
             </div>
           )}
         </section>
+        )}
 
+        {settingsTab === 'theme' && (
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-white/70">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -3044,14 +3512,96 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                 className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
               />
 
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setThemeFilterScope('all')}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    themeFilterScope === 'all'
+                      ? 'border-emerald-300/50 bg-emerald-400/20 text-emerald-100'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  All themes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setThemeFilterScope('mine')}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    themeFilterScope === 'mine'
+                      ? 'border-emerald-300/50 bg-emerald-400/20 text-emerald-100'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  My themes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setThemeFilterScope('shared')}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    themeFilterScope === 'shared'
+                      ? 'border-emerald-300/50 bg-emerald-400/20 text-emerald-100'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  Shared themes
+                </button>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.15em] text-white/50">Sort</span>
+                  <button
+                    type="button"
+                    onClick={() => setThemeSortMode('newest')}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      themeSortMode === 'newest'
+                        ? 'border-sky-300/50 bg-sky-400/20 text-sky-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    Newest
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThemeSortMode('most-used')}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      themeSortMode === 'most-used'
+                        ? 'border-sky-300/50 bg-sky-400/20 text-sky-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    Most used
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThemeSortMode('mine-first')}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      themeSortMode === 'mine-first'
+                        ? 'border-sky-300/50 bg-sky-400/20 text-sky-100'
+                        : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    Mine first
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {filteredThemeTemplates.map((theme) => {
+                {sortedThemeTemplates.map((theme) => {
                   const isSelected = selectedThemeTemplate.id === theme.id;
+                  const isBuiltIn = builtInThemeIds.has(theme.id);
+                  const isEditable = isCustomThemeEditable(theme);
+                  const isOwnedByCurrentUser = !!(userId.trim() && theme.ownerUserId === userId.trim());
                   return (
-                    <button
+                    <div
                       key={theme.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setThemeSelectedId(theme.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setThemeSelectedId(theme.id);
+                        }
+                      }}
                       className={`rounded-xl border px-3 py-3 text-left transition ${
                         isSelected
                           ? 'border-emerald-300/60 bg-emerald-400/15'
@@ -3063,6 +3613,16 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                         <span className="rounded-md border border-white/20 px-1.5 py-0.5 font-mono text-[10px] text-white/70">
                           {theme.id}
                         </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] text-white/60">
+                          {isBuiltIn ? 'Built-in' : isOwnedByCurrentUser ? 'Mine' : 'Shared'}
+                        </span>
+                        {!isBuiltIn && (
+                          <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] text-white/60">
+                            {(theme.visibility || 'shared') === 'private' ? 'Private' : 'Shared'}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-white/60">{theme.description}</p>
                       <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-slate-900/40">
@@ -3083,15 +3643,112 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                           />
                         ))}
                       </div>
-                    </button>
+                      <div className="mt-2 text-[11px] text-white/50">
+                        Used {themeUsageCounts[theme.id] || 0} time(s)
+                      </div>
+                      {!isBuiltIn && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              beginEditCustomTheme(theme);
+                            }}
+                            disabled={!isEditable}
+                            className="rounded-full border border-sky-300/40 bg-sky-400/15 px-3 py-1 text-[11px] font-semibold text-sky-100 hover:bg-sky-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleDeleteCustomTheme(theme);
+                            }}
+                            disabled={!isEditable}
+                            className="rounded-full border border-rose-300/40 bg-rose-400/15 px-3 py-1 text-[11px] font-semibold text-rose-100 hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
-                {filteredThemeTemplates.length === 0 && (
+                {sortedThemeTemplates.length === 0 && (
                   <div className="rounded-xl border border-white/20 bg-white/5 px-3 py-4 text-xs text-white/60">
                     No theme templates match your search.
                   </div>
                 )}
               </div>
+
+              {editingThemeId && (
+                <div className="rounded-xl border border-sky-300/30 bg-sky-400/10 px-3 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-100">
+                    Edit Custom Theme
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <input
+                      value={editingThemeLabel}
+                      onChange={(event) => setEditingThemeLabel(event.target.value)}
+                      type="text"
+                      placeholder="Theme name"
+                      className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none"
+                    />
+                    <select
+                      value={editingThemeVisibility}
+                      onChange={(event) =>
+                        setEditingThemeVisibility(event.target.value === 'private' ? 'private' : 'shared')
+                      }
+                      className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white focus:border-sky-400/60 focus:outline-none"
+                    >
+                      <option value="shared" className="bg-slate-900">
+                        Shared
+                      </option>
+                      <option value="private" className="bg-slate-900">
+                        Private
+                      </option>
+                    </select>
+                    <input
+                      value={editingThemeDescription}
+                      onChange={(event) => setEditingThemeDescription(event.target.value)}
+                      type="text"
+                      placeholder="Description"
+                      className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none md:col-span-2"
+                    />
+                    <input
+                      value={editingThemeTags}
+                      onChange={(event) => setEditingThemeTags(event.target.value)}
+                      type="text"
+                      placeholder="Tags (comma separated)"
+                      className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-sky-400/60 focus:outline-none md:col-span-2"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveEditedTheme}
+                      disabled={editingThemeSaving}
+                      className="rounded-full border border-emerald-300/40 bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {editingThemeSaving ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditCustomTheme}
+                      disabled={editingThemeSaving}
+                      className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white/70 hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {editingThemeError && (
+                    <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                      {editingThemeError}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <input
@@ -3238,6 +3895,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
             </div>
           )}
         </section>
+        )}
 
         {canPersistHistory && (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-white/70">

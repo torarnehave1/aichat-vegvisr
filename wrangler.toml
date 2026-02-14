@@ -1,4 +1,5 @@
 name = "aichat-vegvisr"
+account_id = "5d9b2060ef095c777711a8649c24914e"
 compatibility_date = "2025-01-15"
 pages_build_output_dir = "dist"
 
@@ -12,4 +13,4 @@ service = "test-domain-worker"
 
 [[kv_namespaces]]
 binding = "THEME_STUDIO_KV"
-id = "1e3f20b8ed40453dbfa1f771012c99f2"
+id = "c1489b0abee34a9d82f326b1b8f89c15"

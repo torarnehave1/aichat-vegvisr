@@ -255,6 +255,8 @@ type ThemeTemplate = {
   description: string;
   tags: string[];
   swatches: string[];
+  fontFamily?: string;
+  googleFontImportUrl?: string;
   tokens: {
     bg: string;
     surface: string;
@@ -285,6 +287,8 @@ const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
     description: 'Clean and bright product style.',
     tags: ['light', 'neutral', 'product'],
     swatches: ['#f8fafc', '#ffffff', '#0f172a', '#475569', '#0ea5e9'],
+    fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif",
+    googleFontImportUrl: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap',
     tokens: {
       bg: '#f8fafc',
       surface: '#ffffff',
@@ -304,6 +308,8 @@ const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
     description: 'Calm blue palette for landing pages.',
     tags: ['blue', 'marketing', 'light'],
     swatches: ['#f0f9ff', '#ffffff', '#082f49', '#075985', '#0284c7'],
+    fontFamily: "'Manrope', -apple-system, 'Segoe UI', sans-serif",
+    googleFontImportUrl: 'https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap',
     tokens: {
       bg: '#f0f9ff',
       surface: '#ffffff',
@@ -323,6 +329,8 @@ const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
     description: 'Natural green palette with soft contrast.',
     tags: ['green', 'minimal', 'nature'],
     swatches: ['#f7fee7', '#ffffff', '#14532d', '#365314', '#4d7c0f'],
+    fontFamily: "'Lora', Georgia, serif",
+    googleFontImportUrl: 'https://fonts.googleapis.com/css2?family=Lora:wght@400;600;700&display=swap',
     tokens: {
       bg: '#f7fee7',
       surface: '#ffffff',
@@ -342,6 +350,8 @@ const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
     description: 'Warm and conversion-focused accent styling.',
     tags: ['warm', 'coral', 'bold'],
     swatches: ['#fff7ed', '#ffffff', '#7c2d12', '#9a3412', '#ea580c'],
+    fontFamily: "'Poppins', -apple-system, 'Segoe UI', sans-serif",
+    googleFontImportUrl: 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap',
     tokens: {
       bg: '#fff7ed',
       surface: '#ffffff',
@@ -361,6 +371,9 @@ const BUILT_IN_THEME_TEMPLATES: ThemeTemplate[] = [
     description: 'Dark UI with strong CTA contrast.',
     tags: ['dark', 'saas', 'contrast'],
     swatches: ['#020617', '#0f172a', '#e2e8f0', '#94a3b8', '#22d3ee'],
+    fontFamily: "'Space Grotesk', -apple-system, 'Segoe UI', sans-serif",
+    googleFontImportUrl:
+      'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap',
     tokens: {
       bg: '#020617',
       surface: '#0f172a',
@@ -406,8 +419,16 @@ const resolveThemeTemplateInCatalog = (value: string, catalog: ThemeTemplate[]):
   return loose || null;
 };
 
+const resolveThemeFont = (theme: ThemeTemplate) => ({
+  fontFamily: theme.fontFamily || "'Inter', -apple-system, 'Segoe UI', sans-serif",
+  googleFontImportUrl:
+    theme.googleFontImportUrl ||
+    'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap'
+});
+
 const buildThemeTemplateCss = (theme: ThemeTemplate) => {
   const t = theme.tokens;
+  const font = resolveThemeFont(theme);
   return `:root, html[data-v-theme="${theme.id}"] {
   --v-bg: ${t.bg};
   --v-surface: ${t.surface};
@@ -419,12 +440,14 @@ const buildThemeTemplateCss = (theme: ThemeTemplate) => {
   --v-border: ${t.border};
   --v-radius: ${t.radius};
   --v-shadow: ${t.shadow};
+  --v-font: ${font.fontFamily};
 }
 html[data-v-theme="${theme.id}"], html[data-v-theme="${theme.id}"] body {
   background: var(--v-bg);
   color: var(--v-text);
+  font-family: var(--v-font);
 }
-.v-page { min-height: 100vh; background: var(--v-bg); color: var(--v-text); }
+.v-page { min-height: 100vh; background: var(--v-bg); color: var(--v-text); font-family: var(--v-font); }
 .v-container { width: min(1120px, 92vw); margin: 0 auto; }
 .v-section { padding: clamp(20px, 4vw, 36px) 0; }
 .v-grid { display: grid; gap: 12px; }
@@ -468,6 +491,7 @@ const extractThemeFromCss = ({
   const border = varValue('v-border') || allColors[6] || '#cbd5e1';
   const radius = varValue('v-radius') || propValue('border-radius') || '16px';
   const shadow = varValue('v-shadow') || propValue('box-shadow') || '0 20px 45px rgba(15, 23, 42, 0.08)';
+  const fontFamily = varValue('v-font') || propValue('font-family') || "'Inter', -apple-system, 'Segoe UI', sans-serif";
 
   const id = normalizeThemeId(baseId) || `graph-theme-${Date.now()}`;
   const finalLabel = label.trim() || 'Imported Graph Theme';
@@ -479,6 +503,8 @@ const extractThemeFromCss = ({
     description: 'Theme imported from graph CSS node.',
     tags: ['imported', 'graph-theme'],
     swatches,
+    fontFamily,
+    googleFontImportUrl: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap',
     tokens: {
       bg,
       surface,
@@ -509,6 +535,7 @@ const buildThemePreviewHtml = (
   const previewTextSize = cardMode ? '11px' : '14px';
   const previewBtnSize = cardMode ? '10px' : '13px';
   const imageHeight = cardMode ? '88px' : '220px';
+  const font = resolveThemeFont(theme);
   const imageBlock = imageUrl
     ? `<div class="preview-image-wrap v-card">
          <img class="preview-image" src="${imageUrl}" alt="Theme preview image" />
@@ -520,8 +547,11 @@ const buildThemePreviewHtml = (
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="${font.googleFontImportUrl}" rel="stylesheet" />
     <style>
-      html, body { margin: 0; padding: 0; font-family: Inter, -apple-system, "Segoe UI", sans-serif; }
+      html, body { margin: 0; padding: 0; font-family: ${font.fontFamily}; }
       ${buildThemeTemplateCss(theme)}
       .preview-root { padding: 8px; }
       .preview-grid { grid-template-columns: ${previewGridCols}; align-items: stretch; }

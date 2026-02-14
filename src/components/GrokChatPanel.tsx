@@ -216,6 +216,7 @@ const GRAPH_CREATE_THEME_PAGE_NODE_ENDPOINT = '/api/graph/create-theme-page-node
 const THEME_CREATE_FROM_URL_ENDPOINT = '/api/theme/create-from-url';
 const RESUME_SESSION_ON_LOAD = false;
 const GRAPH_IDENTIFIER = 'graph_1768629904479';
+const THEME_GRAPH_SOURCE_ID = '980a2d35-0a17-426d-a0f4-db24a7b27090';
 const CHUNK_DURATION_SECONDS = 120;
 
 const SUPPORTED_AUDIO_MIME_TYPES = new Set([
@@ -809,7 +810,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [themeStudioOpen, setThemeStudioOpen] = useState(false);
   const [themeSearch, setThemeSearch] = useState('');
   const [customThemeTemplates, setCustomThemeTemplates] = useState<ThemeTemplate[]>([]);
-  const [themeCatalogGraphId, setThemeCatalogGraphId] = useState(GRAPH_IDENTIFIER);
+  const [themeCatalogGraphId, setThemeCatalogGraphId] = useState(THEME_GRAPH_SOURCE_ID);
   const [themeCatalogLoading, setThemeCatalogLoading] = useState(false);
   const [themeCatalogError, setThemeCatalogError] = useState('');
   const [themeSelectedId, setThemeSelectedId] = useState(BUILT_IN_THEME_TEMPLATES[0].id);
@@ -830,7 +831,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     htmlNodeId: string;
     label: string;
   } | null>(null);
-  const [themeImportGraphId, setThemeImportGraphId] = useState(GRAPH_IDENTIFIER);
+  const [themeImportGraphId, setThemeImportGraphId] = useState(THEME_GRAPH_SOURCE_ID);
   const [themeImportCssNodeId, setThemeImportCssNodeId] = useState('');
   const [themeImportLabel, setThemeImportLabel] = useState('');
   const [themeCreateLoading, setThemeCreateLoading] = useState(false);
@@ -888,6 +889,10 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     const owner = userId.trim() || initialEmail?.trim() || 'anon';
     return `${CUSTOM_THEME_STORAGE_KEY_PREFIX}:usage:v1:${owner}`;
   }, [userId, initialEmail]);
+
+  // Note: Theme graph is the only source-of-truth for Theme Studio. We do not auto-overwrite
+  // other graph inputs (apply-theme target graph, create-theme-page graph, etc.) because they
+  // represent where the user wants to write/apply changes.
 
   const builtInThemeIds = useMemo(
     () => new Set(BUILT_IN_THEME_TEMPLATES.map((theme) => theme.id)),
@@ -3988,6 +3993,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                     type="text"
                     placeholder="Theme graph ID"
                     className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-fuchsia-400/60 focus:outline-none"
+                    readOnly
                   />
                   <button
                     type="button"

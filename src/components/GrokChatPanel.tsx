@@ -48,6 +48,9 @@ const extractFirstUrl = (text: string) => {
   return match ? match[0] : null;
 };
 
+const looksLikeImageUrl = (value: string) =>
+  /^https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?$/i.test(value.trim());
+
 const getImagePreviewUrl = (imageData?: ChatMessage['imageData']) => {
   if (!imageData) return null;
   if (imageData.base64Data) {
@@ -900,6 +903,8 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [themeAiLabel, setThemeAiLabel] = useState('');
   const [themeAiPrompt, setThemeAiPrompt] = useState('');
   const [themeAiGoogleFontUrl, setThemeAiGoogleFontUrl] = useState('');
+  const [themeAiReferenceImage, setThemeAiReferenceImage] = useState<UploadedImage | null>(null);
+  const [themeAiImageDragOver, setThemeAiImageDragOver] = useState(false);
   const [themeAiCreatePage, setThemeAiCreatePage] = useState(true);
   const [themeAiGraphId, setThemeAiGraphId] = useState(GRAPH_IDENTIFIER);
   const [themeAiHeroImageUrl, setThemeAiHeroImageUrl] = useState('');
@@ -955,6 +960,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [editingThemeVisibility, setEditingThemeVisibility] = useState<'shared' | 'private'>('shared');
   const [editingThemeSaving, setEditingThemeSaving] = useState(false);
   const [editingThemeError, setEditingThemeError] = useState('');
+  const themeAiImageInputRef = useRef<HTMLInputElement | null>(null);
   const lastInitializedSessionKey = useRef<string | null>(null);
   const sessionInitPromise = useRef<Promise<void> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1801,6 +1807,106 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }
   };
 
+  const setThemeAiImageFromFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result;
+        if (typeof result === 'string') {
+          resolve(result);
+        } else {
+          reject(new Error('Unable to read image.'));
+        }
+      };
+      reader.onerror = () => reject(new Error('Unable to read image.'));
+      reader.readAsDataURL(file);
+    });
+    const base64 = dataUrl.split(',')[1] || null;
+    setThemeAiReferenceImage({
+      file,
+      preview: dataUrl,
+      base64,
+      mimeType: file.type || 'image/jpeg'
+    });
+    setThemeAiError('');
+  };
+
+  const setThemeAiImageFromUrl = async (url: string) => {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) return false;
+
+    try {
+      const { base64, mimeType } = await toBase64FromUrl(trimmed);
+      setThemeAiReferenceImage({
+        file: null,
+        preview: `data:${mimeType};base64,${base64}`,
+        base64,
+        mimeType,
+        sourceUrl: trimmed
+      });
+    } catch {
+      setThemeAiReferenceImage({
+        file: null,
+        preview: trimmed,
+        base64: null,
+        mimeType: 'image/jpeg',
+        sourceUrl: trimmed,
+        isUrlOnly: true
+      });
+    }
+    setThemeAiError('');
+    return true;
+  };
+
+  const handleThemeAiImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      await setThemeAiImageFromFile(file);
+    }
+    event.target.value = '';
+  };
+
+  const handleThemeAiPromptPaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = event.clipboardData?.items;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          event.preventDefault();
+          const file = item.getAsFile();
+          if (file) {
+            await setThemeAiImageFromFile(file);
+          }
+          return;
+        }
+      }
+    }
+
+    const text = event.clipboardData.getData('text/plain').trim();
+    if (looksLikeImageUrl(text)) {
+      event.preventDefault();
+      await setThemeAiImageFromUrl(text);
+    }
+  };
+
+  const handleThemeAiImageDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setThemeAiImageDragOver(false);
+
+    const file = event.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      await setThemeAiImageFromFile(file);
+      return;
+    }
+
+    const urlData =
+      event.dataTransfer.getData('text/uri-list') ||
+      event.dataTransfer.getData('text/plain');
+    if (looksLikeImageUrl(urlData)) {
+      await setThemeAiImageFromUrl(urlData);
+    }
+  };
+
   const handleGenerateThemeWithAi = async () => {
     const requiredUserId = getRequiredUserId();
     if (!requiredUserId) return;
@@ -1808,10 +1914,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     const labelValue = themeAiLabel.trim();
     const promptValue = themeAiPrompt.trim();
     const fontUrlValue = themeAiGoogleFontUrl.trim();
+    const hasReferenceImage = Boolean(themeAiReferenceImage?.preview || themeAiReferenceImage?.sourceUrl);
 
     resetThemeStudioState();
-    if (!promptValue) {
-      setThemeAiError('Please describe the theme you want.');
+    if (!promptValue && !hasReferenceImage) {
+      setThemeAiError('Please describe the theme or attach a reference image.');
       return;
     }
 
@@ -1837,18 +1944,35 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
       const userMessage = `Create a new theme.\nPreferred label (optional): ${labelValue || '(choose)'}\nGoogle font import URL (optional): ${
         fontUrlValue || '(choose)'
-      }\nTheme description:\n${promptValue}\n${remixContext}`;
+      }\nTheme description:\n${promptValue || '(Infer style directly from reference image)'}\n${
+        hasReferenceImage
+          ? 'Reference image is attached. Extract palette, typography mood, spacing style, and UI tone from it.'
+          : 'No reference image attached.'
+      }\n${remixContext}`;
+
+      const imageUrl = themeAiReferenceImage?.preview || themeAiReferenceImage?.sourceUrl || '';
+      const userContent = hasReferenceImage
+        ? [
+            { type: 'text', text: userMessage },
+            {
+              type: 'image_url',
+              image_url: {
+                url: imageUrl
+              }
+            }
+          ]
+        : userMessage;
 
       const payload = {
         userId: requiredUserId,
         model: 'gpt-5.2',
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: userMessage }
+          { role: 'user', content: userContent }
         ],
         context: { useGraphContext: false, useSelectionContext: false },
         tools: { useProffTools: false, useSourcesTools: false, useTemplateTools: false },
-        attachments: { imageName: null, audioName: null },
+        attachments: { imageName: themeAiReferenceImage?.file?.name || null, audioName: null },
         stream: false
       };
 
@@ -4266,8 +4390,64 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                 <textarea
                   value={themeAiPrompt}
                   onChange={(event) => setThemeAiPrompt(event.target.value)}
+                  onPaste={handleThemeAiPromptPaste}
                   placeholder="Describe the theme: mood, colors, industry, style references, and any constraints."
                   className="mt-2 min-h-[90px] w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:border-amber-400/60 focus:outline-none"
+                />
+                <div
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setThemeAiImageDragOver(true);
+                  }}
+                  onDragLeave={() => setThemeAiImageDragOver(false)}
+                  onDrop={handleThemeAiImageDrop}
+                  className={`mt-2 rounded-xl border border-dashed px-3 py-3 text-xs transition ${
+                    themeAiImageDragOver
+                      ? 'border-amber-300/70 bg-amber-400/15'
+                      : 'border-white/25 bg-white/5'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-white/70">
+                      Reference image (optional): drag/drop, paste into prompt, or choose file.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => themeAiImageInputRef.current?.click()}
+                      className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold text-white/80 hover:bg-white/20"
+                    >
+                      Choose image
+                    </button>
+                  </div>
+                  {themeAiReferenceImage && (
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <img
+                        src={themeAiReferenceImage.preview}
+                        alt="Theme reference"
+                        className="h-16 w-24 rounded-lg border border-white/20 object-cover"
+                      />
+                      <div className="min-w-[180px] flex-1 text-[11px] text-white/60">
+                        <div className="truncate">
+                          {themeAiReferenceImage.file?.name || themeAiReferenceImage.sourceUrl || 'Reference image attached'}
+                        </div>
+                        <div className="mt-1">AI will analyze this image when generating the theme.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setThemeAiReferenceImage(null)}
+                        className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold text-white/70 hover:bg-white/20"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={themeAiImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleThemeAiImageUpload}
+                  className="hidden"
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[11px] text-white/50">
@@ -4276,7 +4456,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   <button
                     type="button"
                     onClick={handleGenerateThemeWithAi}
-                    disabled={themeAiLoading || !themeAiPrompt.trim()}
+                    disabled={themeAiLoading || (!themeAiPrompt.trim() && !themeAiReferenceImage)}
                     className="rounded-full border border-amber-300/40 bg-amber-400/15 px-4 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-400/25 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {themeAiLoading ? 'Generating...' : 'Generate theme'}

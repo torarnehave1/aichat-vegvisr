@@ -1083,11 +1083,16 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!themeStudioOpen) return;
-    if (customThemeTemplates.length > 0) return;
     if (!themeCatalogGraphId.trim()) return;
     loadThemesFromGraph().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeStudioOpen, themeCatalogGraphId]);
+
+  useEffect(() => {
+    const selectedGraphId = themeCatalogGraphId.trim();
+    if (!selectedGraphId) return;
+    setThemeAiGraphId(selectedGraphId);
+  }, [themeCatalogGraphId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1697,11 +1702,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     }
   };
 
-  const loadThemesFromGraph = async () => {
+  const loadThemesFromGraph = async (graphIdOverride?: string) => {
     setThemeCatalogError('');
     setThemeCatalogLoading(true);
     try {
-      const graphId = themeCatalogGraphId.trim();
+      const graphId = (graphIdOverride || themeCatalogGraphId).trim();
       if (!graphId) throw new Error('Graph ID is required.');
 
       const url = new URL(GRAPH_GET_ENDPOINT, window.location.origin);
@@ -1725,11 +1730,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     } finally {
       setThemeCatalogLoading(false);
     }
-  };
-
-  const handleLoadThemesFromGraph = async () => {
-    resetThemeStudioState();
-    await loadThemesFromGraph();
   };
 
   const buildThemePrompt = (theme: ThemeTemplate) =>
@@ -4153,10 +4153,15 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                 <div className="mt-1 text-[11px] text-fuchsia-100/70">
                   {themeGraphCatalog.length} Theme Graph{themeGraphCatalog.length === 1 ? '' : 's'} available.
                 </div>
-                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+                <div className="mt-2 grid grid-cols-1 gap-2">
                   <select
                     value={themeCatalogGraphId}
                     onChange={(event) => setThemeCatalogGraphId(event.target.value)}
+                    onFocus={() => {
+                      if (!themeGraphCatalogLoading) {
+                        loadThemeGraphCatalog().catch(() => null);
+                      }
+                    }}
                     disabled={themeGraphCatalogLoading}
                     className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-fuchsia-400/60 focus:outline-none"
                   >
@@ -4172,30 +4177,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                       ))
                     )}
                   </select>
-                  <button
-                    type="button"
-                    onClick={handleLoadThemesFromGraph}
-                    disabled={themeCatalogLoading || themeGraphCatalogLoading || !themeCatalogGraphId.trim()}
-                    className="rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-4 py-1.5 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-400/25 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {themeCatalogLoading ? 'Loading...' : 'A) Load themes'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={loadThemesFromGraph}
-                    disabled={themeCatalogLoading}
-                    className="rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    B) Reload themes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={loadThemeGraphCatalog}
-                    disabled={themeGraphCatalogLoading}
-                    className="rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {themeGraphCatalogLoading ? 'Refreshing...' : 'C) Refresh graph list'}
-                  </button>
+                  <div className="text-[11px] text-fuchsia-100/70">
+                    {themeCatalogLoading
+                      ? 'Loading themes from selected Theme Graph...'
+                      : 'Themes load automatically when you select a Theme Graph.'}
+                  </div>
                 </div>
                 {themeGraphCatalogError && (
                   <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
@@ -4226,7 +4212,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                         : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
                     }`}
                   >
-                    A) Create new theme
+                    Create new theme
                   </button>
                   <button
                     type="button"
@@ -4237,7 +4223,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                         : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
                     }`}
                   >
-                    B) Remix selected theme
+                    Remix selected theme
                   </button>
                 </div>
                 <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr]">
@@ -4266,7 +4252,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                         : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
                     }`}
                   >
-                    C) Also create Theme Page node
+                    Also create Theme Page node
                   </button>
                   <input
                     value={themeAiGraphId}

@@ -4157,12 +4157,6 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   <select
                     value={themeCatalogGraphId}
                     onChange={(event) => setThemeCatalogGraphId(event.target.value)}
-                    onFocus={() => {
-                      if (!themeGraphCatalogLoading) {
-                        loadThemeGraphCatalog().catch(() => null);
-                      }
-                    }}
-                    disabled={themeGraphCatalogLoading}
                     className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-fuchsia-400/60 focus:outline-none"
                   >
                     {!themeGraphCatalogOptions.length ? (

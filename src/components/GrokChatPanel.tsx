@@ -209,6 +209,7 @@ const GRAPH_CLONE_HTML_NODE_ENDPOINT = '/api/graph/clone-html-node';
 const GRAPH_ATTACH_STYLES_ENDPOINT = '/api/graph/attach-styles';
 const GRAPH_DETACH_STYLES_ENDPOINT = '/api/graph/detach-styles';
 const GRAPH_GET_ENDPOINT = '/api/graph/getknowgraph';
+const GRAPH_THEME_CATALOG_ENDPOINT = '/api/graph/theme-graphs';
 const GRAPH_APPLY_THEME_TEMPLATE_ENDPOINT = '/api/graph/apply-theme-template';
 const GRAPH_APPLY_THEME_TEMPLATE_BULK_ENDPOINT = '/api/graph/apply-theme-template-bulk';
 const GRAPH_VALIDATE_THEME_CONTRACT_ENDPOINT = '/api/graph/validate-theme-contract';
@@ -287,6 +288,12 @@ type ThemeTemplate = {
 type ThemeFilterScope = 'all' | 'mine' | 'shared';
 type ThemeSortMode = 'newest' | 'most-used' | 'mine-first';
 type SettingsTab = 'assistant' | 'import' | 'theme';
+type ThemeGraphCatalogItem = {
+  id: string;
+  title: string;
+  updatedAt?: string;
+  createdBy?: string;
+};
 
 type GraphNode = {
   id: string;
@@ -883,6 +890,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
   const [themeCatalogGraphId, setThemeCatalogGraphId] = useState(THEME_GRAPH_SOURCE_ID);
   const [themeCatalogLoading, setThemeCatalogLoading] = useState(false);
   const [themeCatalogError, setThemeCatalogError] = useState('');
+  const [themeGraphCatalog, setThemeGraphCatalog] = useState<ThemeGraphCatalogItem[]>([]);
+  const [themeGraphCatalogLoading, setThemeGraphCatalogLoading] = useState(false);
+  const [themeGraphCatalogError, setThemeGraphCatalogError] = useState('');
   const [themeSelectedId, setThemeSelectedId] = useState(BUILT_IN_THEME_TEMPLATES[0].id);
   const [themeSourceUrl, setThemeSourceUrl] = useState('');
   const [themeSourceLabel, setThemeSourceLabel] = useState('');
@@ -1049,13 +1059,35 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     [allThemeTemplates, themePreviewModalId]
   );
 
+  const themeGraphCatalogOptions = useMemo(() => {
+    const currentGraphId = themeCatalogGraphId.trim();
+    const options = [...themeGraphCatalog];
+    if (currentGraphId && !options.some((item) => item.id === currentGraphId)) {
+      options.unshift({
+        id: currentGraphId,
+        title: currentGraphId,
+        updatedAt: '',
+        createdBy: ''
+      });
+    }
+    return options;
+  }, [themeCatalogGraphId, themeGraphCatalog]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!themeStudioOpen) return;
+    loadThemeGraphCatalog().catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeStudioOpen]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!themeStudioOpen) return;
     if (customThemeTemplates.length > 0) return;
+    if (!themeCatalogGraphId.trim()) return;
     loadThemesFromGraph().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [themeStudioOpen]);
+  }, [themeStudioOpen, themeCatalogGraphId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1627,6 +1659,42 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     setThemeAiResult(null);
     setThemeAiPageResult(null);
     setThemeCatalogError('');
+  };
+
+  const loadThemeGraphCatalog = async () => {
+    setThemeGraphCatalogError('');
+    setThemeGraphCatalogLoading(true);
+    try {
+      const response = await fetch(GRAPH_THEME_CATALOG_ENDPOINT, {
+        method: 'GET',
+        headers: { ...authHeaders() }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.success === false || !Array.isArray(data?.results)) {
+        throw new Error(String(data?.message || `Theme graph catalog failed (${response.status}).`));
+      }
+
+      const options: ThemeGraphCatalogItem[] = (data.results as Array<Record<string, unknown>>)
+        .map((item) => ({
+          id: String(item?.id || '').trim(),
+          title: String(item?.title || 'Untitled Theme Graph').trim(),
+          updatedAt: String(item?.updatedAt || ''),
+          createdBy: String(item?.createdBy || '')
+        }))
+        .filter((item) => item.id);
+
+      setThemeGraphCatalog(options);
+      if (!themeCatalogGraphId.trim() && options.length > 0) {
+        setThemeCatalogGraphId(options[0].id);
+      }
+    } catch (error) {
+      setThemeGraphCatalogError(
+        error instanceof Error ? error.message : 'Unable to load Theme Graph catalog.'
+      );
+      setThemeGraphCatalog([]);
+    } finally {
+      setThemeGraphCatalogLoading(false);
+    }
   };
 
   const loadThemesFromGraph = async () => {
@@ -4082,19 +4150,32 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                 <p className="mt-1 text-xs text-fuchsia-100/80">
                   Loads themes directly from the Theme Graph html-nodes. No KV sync needed.
                 </p>
-                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
-                  <input
+                <div className="mt-1 text-[11px] text-fuchsia-100/70">
+                  {themeGraphCatalog.length} Theme Graph{themeGraphCatalog.length === 1 ? '' : 's'} available.
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+                  <select
                     value={themeCatalogGraphId}
                     onChange={(event) => setThemeCatalogGraphId(event.target.value)}
-                    type="text"
-                    placeholder="Theme graph ID"
+                    disabled={themeGraphCatalogLoading}
                     className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs text-white placeholder:text-white/40 focus:border-fuchsia-400/60 focus:outline-none"
-                    readOnly
-                  />
+                  >
+                    {!themeGraphCatalogOptions.length ? (
+                      <option value="">
+                        {themeGraphCatalogLoading ? 'Loading Theme Graphs...' : 'No Theme Graphs found'}
+                      </option>
+                    ) : (
+                      themeGraphCatalogOptions.map((item) => (
+                        <option key={item.id} value={item.id} className="bg-slate-900 text-white">
+                          {item.title} • {item.id}
+                        </option>
+                      ))
+                    )}
+                  </select>
                   <button
                     type="button"
                     onClick={handleLoadThemesFromGraph}
-                    disabled={themeCatalogLoading || !themeCatalogGraphId.trim()}
+                    disabled={themeCatalogLoading || themeGraphCatalogLoading || !themeCatalogGraphId.trim()}
                     className="rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-4 py-1.5 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-400/25 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {themeCatalogLoading ? 'Loading...' : 'A) Load themes'}
@@ -4107,7 +4188,20 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                   >
                     B) Reload themes
                   </button>
+                  <button
+                    type="button"
+                    onClick={loadThemeGraphCatalog}
+                    disabled={themeGraphCatalogLoading}
+                    className="rounded-full border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {themeGraphCatalogLoading ? 'Refreshing...' : 'C) Refresh graph list'}
+                  </button>
                 </div>
+                {themeGraphCatalogError && (
+                  <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+                    {themeGraphCatalogError}
+                  </div>
+                )}
                 {themeCatalogError && (
                   <div className="mt-2 rounded-xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
                     {themeCatalogError}

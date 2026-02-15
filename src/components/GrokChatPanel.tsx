@@ -295,6 +295,20 @@ type GraphNode = {
   type?: string;
   updatedAt?: string;
   createdAt?: string;
+  metadata?: Record<string, any>;
+};
+
+type GraphEdge = {
+  id?: string;
+  source: string;
+  target: string;
+  label?: string;
+  type?: string;
+};
+
+type GraphData = {
+  nodes: GraphNode[];
+  edges?: GraphEdge[];
 };
 
 const extractFirstMatch = (text: string, pattern: RegExp) => {
@@ -309,6 +323,51 @@ const collectInlineCss = (html: string) => {
     return '';
   });
   return css;
+};
+
+const collectCssNodesForHtmlNode = (htmlNodeId: string, graphData: GraphData): GraphNode[] => {
+  const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+  const edges = Array.isArray(graphData?.edges) ? graphData.edges : [];
+  const cssNodes = nodes.filter((node) => String(node?.type || '').toLowerCase() === 'css-node');
+
+  const styleEdges = edges.filter((edge) => {
+    const edgeType = String(edge?.label || edge?.type || '').toLowerCase();
+    return edgeType === 'styles';
+  });
+
+  const cssNodeIdsFromEdges = new Set(
+    styleEdges
+      .filter((edge) => edge?.target === htmlNodeId && edge?.source)
+      .map((edge) => edge.source)
+  );
+
+  const applicableCss = cssNodes.filter((node) => {
+    const appliesTo = Array.isArray(node?.metadata?.appliesTo) ? node.metadata.appliesTo : [];
+    return cssNodeIdsFromEdges.has(node.id) || appliesTo.includes(htmlNodeId) || appliesTo.includes('*');
+  });
+
+  applicableCss.sort((a, b) => (Number(a?.metadata?.priority ?? 999) as number) - (Number(b?.metadata?.priority ?? 999) as number));
+  return applicableCss;
+};
+
+const injectCssNodesIntoHtml = (htmlContent: string, htmlNodeId: string, graphData: GraphData) => {
+  const cssNodes = collectCssNodesForHtmlNode(htmlNodeId, graphData);
+  if (!cssNodes.length) return htmlContent;
+
+  let cssInjection = '<!-- CSS Nodes Injected by Vegvisr -->\\n';
+  for (const cssNode of cssNodes) {
+    const priority = Number(cssNode?.metadata?.priority ?? 999);
+    cssInjection += `<style data-css-node-id="${cssNode.id}" data-css-node-label="${String(
+      cssNode.label || ''
+    ).replace(/"/g, '&quot;')}" data-css-priority="${priority}">\\n`;
+    cssInjection += `/* CSS Node: ${cssNode.label || cssNode.id} (Priority: ${priority}) */\\n`;
+    cssInjection += String(cssNode.info || '');
+    cssInjection += '\\n</style>\\n';
+  }
+
+  if (htmlContent.includes('</head>')) return htmlContent.replace('</head>', cssInjection + '</head>');
+  if (htmlContent.includes('<head>')) return htmlContent.replace('<head>', '<head>\\n' + cssInjection);
+  return cssInjection + htmlContent;
 };
 
 const findCssVar = (cssText: string, varName: string) => {
@@ -340,11 +399,18 @@ const extractHexColors = (text: string, max = 10) => {
   return unique;
 };
 
-const buildThemeFromHtmlNode = (node: GraphNode, sourceGraphId: string): ThemeTemplate | null => {
-  const html = String(node.info || '');
+const buildThemeFromHtmlNode = (node: GraphNode, sourceGraphId: string, graphData: GraphData): ThemeTemplate | null => {
+  const rawHtml = String(node.info || '');
   const label = String(node.label || '').trim();
-  if (!html || !label) return null;
-  if (!html.toLowerCase().includes('<html') && !html.toLowerCase().includes('<!doctype')) return null;
+  if (!rawHtml || !label) return null;
+  if (!rawHtml.toLowerCase().includes('<html') && !rawHtml.toLowerCase().includes('<!doctype')) return null;
+
+  // Mirror the html-node rendering behavior from GNewViewer:
+  // - replace {{GRAPH_ID}}
+  // - inject applicable css-node(s) via styles edges / metadata.appliesTo
+  let html = rawHtml;
+  html = html.replace(/\{\{GRAPH_ID\}\}/g, sourceGraphId);
+  html = injectCssNodesIntoHtml(html, node.id, graphData);
 
   const cssText = collectInlineCss(html);
   const dataTheme = extractFirstMatch(html, /data-v-theme=["']([^"']+)["']/i);
@@ -905,7 +971,9 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
   const allThemeTemplates = useMemo(() => {
     const byId = new Map<string, ThemeTemplate>();
-    [...customThemeTemplates, ...BUILT_IN_THEME_TEMPLATES].forEach((theme) => {
+    // Custom themes (theme graph) should override built-ins when ids collide,
+    // otherwise the UI will show the contract-preview instead of the real theme page.
+    [...BUILT_IN_THEME_TEMPLATES, ...customThemeTemplates].forEach((theme) => {
       byId.set(theme.id, theme);
     });
     return [...byId.values()];
@@ -1576,10 +1644,11 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
         throw new Error(String(data?.message || `Graph load failed (${response.status}).`));
       }
 
-      const nodes: GraphNode[] = data.nodes;
+      const graphData: GraphData = { nodes: data.nodes as GraphNode[], edges: data.edges as GraphEdge[] };
+      const nodes: GraphNode[] = graphData.nodes;
       const themes: ThemeTemplate[] = nodes
         .filter((node) => String(node?.type || '').toLowerCase() === 'html-node')
-        .map((node) => buildThemeFromHtmlNode(node, graphId))
+        .map((node) => buildThemeFromHtmlNode(node, graphId, graphData))
         .filter((theme): theme is ThemeTemplate => Boolean(theme && theme.id && theme.tokens));
 
       setCustomThemeTemplates(themes.slice(0, 300));
@@ -1863,6 +1932,29 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
           });
           const htmlNodeId = String(result?.newHtmlNodeId || '').trim();
           if (htmlNodeId) {
+            // Fetch the actual theme page HTML so the preview matches the graph themes.
+            try {
+              const url = new URL(GRAPH_GET_ENDPOINT, window.location.origin);
+              url.searchParams.set('id', graphId);
+              const graphRes = await fetch(url.toString(), { method: 'GET', headers: { ...authHeaders() } });
+              const graph = await graphRes.json().catch(() => ({}));
+              if (graphRes.ok && Array.isArray(graph?.nodes)) {
+                const node = (graph.nodes as GraphNode[]).find((n) => String(n?.id || '') === htmlNodeId);
+                const html = node?.info ? String(node.info) : '';
+                if (html) {
+                  theme.sourceHtml = html;
+                  theme.sourceGraphId = graphId;
+                  theme.sourceHtmlNodeId = htmlNodeId;
+                  setCustomThemeTemplates((prev) => {
+                    const next = prev.filter((item) => item.id !== theme.id);
+                    return [{ ...theme }, ...next].slice(0, 100);
+                  });
+                }
+              }
+            } catch {
+              // Ignore: theme is still usable even if we can't fetch the created node right away.
+            }
+
             setThemeAiPageResult({ graphId, htmlNodeId, label: theme.label });
             showToast(`Created theme page node \"${theme.label}\".`);
             if (themeCatalogGraphId.trim() === graphId) {
@@ -4348,7 +4440,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                           title={`Theme preview ${theme.label}`}
                           srcDoc={theme.sourceHtml || buildThemePreviewHtml(theme, { variant: 'card' })}
                           loading="lazy"
-                          sandbox=""
+                          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox allow-presentation"
                           className="h-36 w-full"
                         />
                       </div>
@@ -4643,7 +4735,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
                     })
                   }
                   loading="lazy"
-                  sandbox=""
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox allow-presentation"
                   className="h-[520px] w-full"
                 />
               </div>

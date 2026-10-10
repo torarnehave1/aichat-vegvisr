@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { useLanguage } from '../lib/LanguageContext';
 import { useTranslation } from '../lib/useTranslation';
+import { apiTokenHeaders } from '../lib/auth';
 
 type ChatMessage = {
   id: string;
@@ -1978,7 +1979,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
       const response = await fetch(CHAT_ENDPOINTS.openai, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...apiTokenHeaders() },
         body: JSON.stringify(payload)
       });
       if (!response.ok) {
@@ -3256,6 +3257,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
 
     const response = await fetch(AUDIO_ENDPOINT, {
       method: 'POST',
+      headers: apiTokenHeaders(),
       body: formData
     });
 
@@ -3710,7 +3712,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       }
       const response = await fetch('https://openai.vegvisr.org/images', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...apiTokenHeaders() },
         body: JSON.stringify({
           userId: requiredUserId,
           model: selectedModel,
@@ -3893,7 +3895,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       setIsStreaming(true);
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...apiTokenHeaders() },
         body: JSON.stringify(payload)
       });
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AuthBar, EcosystemNav, LanguageSelector } from 'vegvisr-ui-kit';
 import aichatLogo from './assets/aichat-logo.png';
 import GrokChatPanel from './components/GrokChatPanel';
+import LiveTranslatePanel from './components/LiveTranslatePanel';
 import { LanguageContext } from './lib/LanguageContext';
 import { readStoredUser, type AuthUser } from './lib/auth';
 import { getStoredLanguage, setStoredLanguage } from './lib/storage';
@@ -278,6 +279,7 @@ function App() {
           )}
 
           <main className="mt-16">
+            <LiveTranslatePanel userId={authUser?.userId} email={authUser?.email} />
             <GrokChatPanel
               initialUserId={authUser?.userId}
               initialEmail={authUser?.email}

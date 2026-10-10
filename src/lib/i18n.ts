@@ -102,6 +102,34 @@ export const translations: Record<Language, TranslationTree> = {
       send: 'Send',
       streaming: 'Streaming…',
       placeholderNote: 'Chat content will render here next. This slice only includes layout and provider selection.'
+    },
+    live: {
+      title: 'Live translation',
+      subtitle: 'transcribed with Whisper, translated with Claude, saved to a knowledge graph',
+      sourceTab: 'Audio from a Chrome tab',
+      sourceMic: 'Microphone',
+      start: 'Start',
+      stop: 'Stop',
+      download: 'Download',
+      clear: 'Clear',
+      tabHint: 'Join the Zoom meeting in Chrome (“Join from browser”). Press Start, choose the Zoom tab and tick “Also share tab audio”. Text appears about every 15 seconds.',
+      micHint: 'Uses the microphone. Works with the Zoom app, but quality depends on the speaker sound reaching the microphone (headphones block it).',
+      listening: 'Listening…',
+      stopped: 'Stopped',
+      saving: 'Saving to knowledge graph…',
+      saved: 'Saved to knowledge graph',
+      saveFailed: 'Could not save to knowledge graph',
+      saveNoToken: 'Not saved to knowledge graph: missing login token. Sign in again, or use Download.',
+      openGraph: 'Open knowledge graph',
+      empty: 'No text yet. Press Start.',
+      transcribing: 'Transcribing…',
+      translating: 'Translating…',
+      segmentError: 'Error',
+      signIn: 'Sign in to use live translation.',
+      unsupported: 'This browser cannot record audio. Use Chrome.',
+      permissionDenied: 'Could not access audio. Allow sharing/microphone and try again.',
+      noAudioTrack: 'No audio was shared. Choose a tab and tick “Also share tab audio”.',
+      recorderError: 'Recording error. Press Stop and Start again.'
     }
   },
   is: {
@@ -198,6 +226,21 @@ export const translations: Record<Language, TranslationTree> = {
       send: 'Senda',
       streaming: 'Streymir…',
       placeholderNote: 'Spjall birtist hér næst. Þessi sneið nær aðeins yfir uppsetningu og veitandaval.'
+    },
+    live: {
+      title: 'Lifandi þýðing',
+      subtitle: 'umritað með Whisper, þýtt með Claude, vistað í þekkingargraf',
+      sourceTab: 'Hljóð úr Chrome-flipa',
+      sourceMic: 'Hljóðnemi',
+      start: 'Byrja',
+      stop: 'Stöðva',
+      download: 'Sækja',
+      clear: 'Hreinsa',
+      listening: 'Hlustar…',
+      stopped: 'Stöðvað',
+      saved: 'Vistað í þekkingargraf',
+      openGraph: 'Opna þekkingargraf',
+      empty: 'Enginn texti enn. Ýttu á Byrja.'
     }
   },
   no: {
@@ -294,6 +337,34 @@ export const translations: Record<Language, TranslationTree> = {
       send: 'Send',
       streaming: 'Strømmer…',
       placeholderNote: 'Chatinn vises her neste gang. Denne delen inneholder kun layout og leverandørvalg.'
+    },
+    live: {
+      title: 'Live-oversettelse',
+      subtitle: 'transkribert med Whisper, oversatt med Claude, lagret i kunnskapsgraf',
+      sourceTab: 'Lyd fra en Chrome-fane',
+      sourceMic: 'Mikrofon',
+      start: 'Start',
+      stop: 'Stopp',
+      download: 'Last ned',
+      clear: 'Tøm',
+      tabHint: 'Bli med i Zoom-møtet i Chrome («Join from browser»). Trykk Start, velg Zoom-fanen og huk av for «Del også fanelyd». Tekst kommer omtrent hvert 15. sekund.',
+      micHint: 'Bruker mikrofonen. Fungerer med Zoom-appen, men kvaliteten avhenger av at lyden fra høyttaleren når mikrofonen (ikke hodetelefoner).',
+      listening: 'Lytter…',
+      stopped: 'Stoppet',
+      saving: 'Lagrer i kunnskapsgraf…',
+      saved: 'Lagret i kunnskapsgraf',
+      saveFailed: 'Kunne ikke lagre i kunnskapsgraf',
+      saveNoToken: 'Ikke lagret i kunnskapsgraf: mangler innloggingsnøkkel. Logg inn på nytt, eller bruk Last ned.',
+      openGraph: 'Åpne kunnskapsgraf',
+      empty: 'Ingen tekst ennå. Trykk Start.',
+      transcribing: 'Transkriberer…',
+      translating: 'Oversetter…',
+      segmentError: 'Feil',
+      signIn: 'Logg inn for å bruke live-oversettelse.',
+      unsupported: 'Denne nettleseren kan ikke ta opp lyd. Bruk Chrome.',
+      permissionDenied: 'Fikk ikke tilgang til lyd. Tillat deling/mikrofon og prøv igjen.',
+      noAudioTrack: 'Ingen lyd ble delt. Velg en fane og huk av for «Del også fanelyd».',
+      recorderError: 'Feil i opptaket. Trykk Stopp og Start igjen.'
     }
   },
   nl: {
@@ -390,6 +461,21 @@ export const translations: Record<Language, TranslationTree> = {
       send: 'Versturen',
       streaming: 'Streamen…',
       placeholderNote: 'Chatcontent verschijnt hierna. Deze slice bevat alleen layout en providerkeuze.'
+    },
+    live: {
+      title: 'Live vertaling',
+      subtitle: 'getranscribeerd met Whisper, vertaald met Claude, opgeslagen in een kennisgraaf',
+      sourceTab: 'Audio van een Chrome-tabblad',
+      sourceMic: 'Microfoon',
+      start: 'Start',
+      stop: 'Stop',
+      download: 'Downloaden',
+      clear: 'Wissen',
+      listening: 'Luistert…',
+      stopped: 'Gestopt',
+      saved: 'Opgeslagen in kennisgraaf',
+      openGraph: 'Kennisgraaf openen',
+      empty: 'Nog geen tekst. Druk op Start.'
     }
   }
 };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLanguage } from '../lib/LanguageContext';
 import { useTranslation } from '../lib/useTranslation';
+import { apiTokenHeaders, readApiToken } from '../lib/auth';
 
 // Live speech translation: captures audio (a browser tab or the microphone) in short
 // segments, transcribes each segment with Whisper, translates it with Claude and
@@ -58,17 +59,6 @@ const extensionForMime = (mime: string) => {
   if (mime.includes('ogg')) return 'ogg';
   if (mime.includes('mp4')) return 'm4a';
   return 'webm';
-};
-
-const readApiToken = () => {
-  try {
-    const raw = localStorage.getItem('user');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.emailVerificationToken === 'string' ? parsed.emailVerificationToken : null;
-  } catch {
-    return null;
-  }
 };
 
 const isHallucination = (text: string) =>
@@ -155,7 +145,11 @@ function LiveTranslatePanel({ userId, email }: Props) {
     formData.append('model', 'whisper-1');
     formData.append('userId', userId || '');
     formData.append('language', SOURCE_LANGUAGE);
-    const response = await fetch(AUDIO_ENDPOINT, { method: 'POST', body: formData });
+    const response = await fetch(AUDIO_ENDPOINT, {
+      method: 'POST',
+      headers: apiTokenHeaders(),
+      body: formData
+    });
     const data = await parseJson(response);
     if (!response.ok) {
       const detail = data?.error || data?.message || `status ${response.status}`;
@@ -170,7 +164,7 @@ function LiveTranslatePanel({ userId, email }: Props) {
       : '';
     const response = await fetch(TRANSLATE_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...apiTokenHeaders() },
       body: JSON.stringify({
         userId,
         model: TRANSLATE_MODEL,

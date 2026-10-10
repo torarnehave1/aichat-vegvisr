@@ -129,7 +129,8 @@ export const translations: Record<Language, TranslationTree> = {
       unsupported: 'This browser cannot record audio. Use Chrome.',
       permissionDenied: 'Could not access audio. Allow sharing/microphone and try again.',
       noAudioTrack: 'No audio was shared. Choose a tab and tick “Also share tab audio”.',
-      recorderError: 'Recording error. Press Stop and Start again.'
+      recorderError: 'Recording error. Press Stop and Start again.',
+      retry: 'Retry translation'
     }
   },
   is: {
@@ -240,7 +241,8 @@ export const translations: Record<Language, TranslationTree> = {
       stopped: 'Stöðvað',
       saved: 'Vistað í þekkingargraf',
       openGraph: 'Opna þekkingargraf',
-      empty: 'Enginn texti enn. Ýttu á Byrja.'
+      empty: 'Enginn texti enn. Ýttu á Byrja.',
+      retry: 'Reyna aftur'
     }
   },
   no: {
@@ -364,7 +366,8 @@ export const translations: Record<Language, TranslationTree> = {
       unsupported: 'Denne nettleseren kan ikke ta opp lyd. Bruk Chrome.',
       permissionDenied: 'Fikk ikke tilgang til lyd. Tillat deling/mikrofon og prøv igjen.',
       noAudioTrack: 'Ingen lyd ble delt. Velg en fane og huk av for «Del også fanelyd».',
-      recorderError: 'Feil i opptaket. Trykk Stopp og Start igjen.'
+      recorderError: 'Feil i opptaket. Trykk Stopp og Start igjen.',
+      retry: 'Prøv å oversette igjen'
     }
   },
   nl: {
@@ -475,7 +478,8 @@ export const translations: Record<Language, TranslationTree> = {
       stopped: 'Gestopt',
       saved: 'Opgeslagen in kennisgraaf',
       openGraph: 'Kennisgraaf openen',
-      empty: 'Nog geen tekst. Druk op Start.'
+      empty: 'Nog geen tekst. Druk op Start.',
+      retry: 'Opnieuw vertalen'
     }
   }
 };

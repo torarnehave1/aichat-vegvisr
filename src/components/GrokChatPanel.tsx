@@ -3862,11 +3862,17 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
     if (!requiredUserId) {
       return 'Sign in required to continue.';
     }
+    const systemPrompt =
+      'You are a helpful assistant. Respond in English unless the user explicitly asks for another language.';
+    // The anthropic worker forwards messages unchanged to the Anthropic API, which rejects a
+    // 'system' role inside messages; Claude gets the system prompt as a top-level field instead.
+    const isClaude = provider === 'claude';
     const payload = {
       userId: requiredUserId,
       model: provider === 'openai' ? openaiModel : provider === 'claude' ? claudeModel : undefined,
+      ...(isClaude ? { system: systemPrompt } : {}),
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Respond in English unless the user explicitly asks for another language.' },
+        ...(isClaude ? [] : [{ role: 'system', content: systemPrompt }]),
         ...messageSnapshot.map((msg, index) => {
           const isLastUser = index === messageSnapshot.length - 1 && msg.role === 'user';
           if (isLastUser && hasImage) {
@@ -3907,6 +3913,7 @@ const GrokChatPanel = ({ initialUserId, initialEmail }: GrokChatPanelProps) => {
       const content =
         data?.choices?.[0]?.message?.content ||
         data?.choices?.[0]?.text ||
+        data?.content?.find?.((block: { type?: string }) => block?.type === 'text')?.text ||
         data?.message ||
         JSON.stringify(data);
       return content;

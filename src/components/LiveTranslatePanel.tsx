@@ -168,19 +168,15 @@ function LiveTranslatePanel({ userId, email }: Props) {
       body: JSON.stringify({
         userId,
         model: TRANSLATE_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You translate live speech transcripts from Turkish to Norwegian (bokmål). ' +
-              'Translate directly and faithfully, keeping the speaker\'s sentence structure, repetitions and wording as close to the original as Norwegian allows. ' +
-              'Do not summarize, do not explain, do not add comments or notes. ' +
-              'The transcript is a fragment of ongoing speech and may start or end mid-sentence; translate it as it is. ' +
-              'Output only the Norwegian translation.' +
-              context
-          },
-          { role: 'user', content: text }
-        ],
+        // The anthropic worker forwards messages unchanged, so the system prompt must be top-level.
+        system:
+          'You translate live speech transcripts from Turkish to Norwegian (bokmål). ' +
+          'Translate directly and faithfully, keeping the speaker\'s sentence structure, repetitions and wording as close to the original as Norwegian allows. ' +
+          'Do not summarize, do not explain, do not add comments or notes. ' +
+          'The transcript is a fragment of ongoing speech and may start or end mid-sentence; translate it as it is. ' +
+          'Output only the Norwegian translation.' +
+          context,
+        messages: [{ role: 'user', content: text }],
         stream: false
       })
     });
@@ -305,6 +301,35 @@ function LiveTranslatePanel({ userId, email }: Props) {
         `${t('live.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  };
+
+  const retryTranslation = (segmentId: string) => {
+    const segment = segmentsRef.current.find((item) => item.id === segmentId);
+    if (!segment?.source) return;
+    patchSegment(segmentId, { status: 'translating', error: undefined });
+    queueRef.current = queueRef.current
+      .then(async () => {
+        try {
+          const translated = await translate(segment.source);
+          patchSegment(segmentId, { target: translated, status: 'done' });
+        } catch (error) {
+          console.error('[LiveTranslate] retry failed', error);
+          patchSegment(segmentId, {
+            status: 'error',
+            error: error instanceof Error ? error.message : String(error)
+          });
+          return;
+        }
+        try {
+          await saveToGraph();
+        } catch (error) {
+          console.error('[LiveTranslate] graph save failed', error);
+          setGraphStatus(
+            `${t('live.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      })
+      .catch((error) => console.error('[LiveTranslate] queue error', error));
   };
 
   const enqueueSegment = (blob: Blob, mime: string) => {
@@ -558,6 +583,15 @@ function LiveTranslatePanel({ userId, email }: Props) {
             {segment.status === 'error' && (
               <p className="mt-1 text-sm text-rose-300">
                 {t('live.segmentError')}: {segment.error}
+                {segment.source && (
+                  <button
+                    type="button"
+                    onClick={() => retryTranslation(segment.id)}
+                    className="ml-3 rounded-lg border border-rose-300/50 px-2 py-0.5 text-xs text-rose-100"
+                  >
+                    {t('live.retry')}
+                  </button>
+                )}
               </p>
             )}
           </div>

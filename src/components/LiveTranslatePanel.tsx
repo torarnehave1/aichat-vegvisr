@@ -61,8 +61,11 @@ const extensionForMime = (mime: string) => {
   return 'webm';
 };
 
-const isHallucination = (text: string) =>
-  text.length < 80 && HALLUCINATION_PATTERNS.some((pattern) => pattern.test(text));
+// Lower-case with Turkish rules first: a plain /i regex does not match the dotted capital İ.
+const isHallucination = (text: string) => {
+  const normalized = text.toLocaleLowerCase('tr-TR');
+  return text.length < 80 && HALLUCINATION_PATTERNS.some((pattern) => pattern.test(normalized));
+};
 
 const buildMarkdown = (title: string, segments: Segment[]) => {
   const body = segments
